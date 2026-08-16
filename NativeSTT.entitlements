@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Hardened Runtime is on (required for notarization), and under it the
+	     microphone is gated by this entitlement regardless of TCC. Without it
+	     macOS denies the request outright: no prompt, and no entry in
+	     System Settings → Privacy & Security → Microphone to switch on.
+
+	     Note what is deliberately NOT here: com.apple.security.app-sandbox.
+	     This app cannot be sandboxed — it installs a CGEventTap, reads and
+	     writes other apps' text through the Accessibility API, and posts a
+	     synthetic ⌘V. Adding an entitlements file must not quietly reintroduce
+	     the sandbox. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>
