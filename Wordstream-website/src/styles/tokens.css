@@ -1,0 +1,255 @@
+/*
+ * tokens.css
+ * Wordstream
+ *
+ * The Gateway design system, ported to the web from the app's Tokens.swift.
+ * If you change one, change the other.
+ *
+ * Colour is organised in three layers, and the whole point is that components
+ * may only touch layer 3:
+ *
+ *     1. PALETTE   the swappable pastel theme          — nobody, directly
+ *     2. PRIMITIVE neutrals, status hues               — nobody, directly
+ *     3. SEMANTIC  --bg-*, --fg-*, --border-*, --focus — components, only these
+ *
+ * SwiftUI enforces that with `private`. Here it is a convention, so it is worth
+ * stating plainly: no stylesheet outside this file may reference a `--palette-`
+ * or `--n-` variable. Both the palette switch and the dark theme are a swap of
+ * layer 3 and nothing else.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Layer 1: Palette
+ *
+ * The six pastel themes. Every `primary` clears 4.5:1 against white, so it can
+ * carry white text as a fill in any theme — that constraint is what makes the
+ * system honestly themeable rather than decorative. `accent` is the warm
+ * terminus of the ramp and is decorative only; it must never carry small text.
+ * ------------------------------------------------------------------ */
+
+:root,
+[data-palette='dawn'] {
+  --palette-primary: #3a39ce;
+  --palette-primary-deep: #2a27b8;
+  --palette-primary-lite: #b6c2f9;
+  --palette-soft: #eef0ff;
+  --palette-soft-dark: #22224a;
+  --palette-accent: #e8853f;
+  --palette-accent-soft: #f9c8b2;
+  --palette-mid: #9180cd;
+}
+
+[data-palette='grove'] {
+  --palette-primary: #3f6b46;
+  --palette-primary-deep: #2f5335;
+  --palette-primary-lite: #a9cbae;
+  --palette-soft: #edf3ec;
+  --palette-soft-dark: #1e2e20;
+  --palette-accent: #d9a441;
+  --palette-accent-soft: #f0dca8;
+  --palette-mid: #8fae7e;
+}
+
+[data-palette='blush'] {
+  --palette-primary: #a8446b;
+  --palette-primary-deep: #87304f;
+  --palette-primary-lite: #efb3c6;
+  --palette-soft: #fbedf1;
+  --palette-soft-dark: #331b24;
+  --palette-accent: #e58b62;
+  --palette-accent-soft: #f6c9ae;
+  --palette-mid: #ce7c88;
+}
+
+[data-palette='lagoon'] {
+  --palette-primary: #2c6e75;
+  --palette-primary-deep: #1f5359;
+  --palette-primary-lite: #a5cfd2;
+  --palette-soft: #e6f1f2;
+  --palette-soft-dark: #142e31;
+  --palette-accent: #dfa469;
+  --palette-accent-soft: #f2dbbe;
+  --palette-mid: #7fb0ae;
+}
+
+[data-palette='lilac'] {
+  --palette-primary: #6b4c9a;
+  --palette-primary-deep: #523878;
+  --palette-primary-lite: #c9b4e8;
+  --palette-soft: #f2edfa;
+  --palette-soft-dark: #241b33;
+  --palette-accent: #d9a93f;
+  --palette-accent-soft: #f1dca6;
+  --palette-mid: #a98bc8;
+}
+
+[data-palette='clay'] {
+  --palette-primary: #a85436;
+  --palette-primary-deep: #853f27;
+  --palette-primary-lite: #edaf93;
+  --palette-soft: #faede7;
+  --palette-soft-dark: #33190f;
+  --palette-accent: #5e8ca6;
+  --palette-accent-soft: #b9d2df;
+  --palette-mid: #c98b6b;
+}
+
+/* ------------------------------------------------------------------ *
+ * Layer 2: Primitives
+ *
+ * Warm-leaning, anchored on a warm near-black. Pure #000 against a warm accent
+ * reads as a hole; #151312 reads as ink. Identical across all palettes.
+ * ------------------------------------------------------------------ */
+
+:root {
+  --n-0: #ffffff;
+  --n-25: #fafafa;
+  --n-50: #f1f1f1;
+  --n-100: #e8e8e8;
+  --n-200: #d6d6d6;
+  --n-300: #b4b4b4;
+  --n-400: #8c8c8c;
+  --n-500: #6b6b6b;
+  --n-700: #3d3d3d;
+  --n-900: #1f1f1f;
+  --n-950: #151312;
+
+  --status-success: #2f855a;
+  --status-warning: #b7791f;
+  --status-danger: #c53030;
+}
+
+/* ------------------------------------------------------------------ *
+ * Layer 3: Semantic — everything a component is allowed to colour with.
+ * ------------------------------------------------------------------ */
+
+:root {
+  --bg-canvas: var(--n-50);
+  --bg-surface: var(--n-0);
+  --bg-surface-alt: var(--n-25);
+  --bg-inverse: var(--n-950);
+  --bg-subtle: var(--n-100);
+  --bg-brand: var(--palette-primary);
+  --bg-brand-hover: var(--palette-primary-deep);
+  --bg-brand-subtle: var(--palette-soft);
+  --bg-accent: var(--palette-accent);
+
+  --fg-primary: var(--n-900);
+  --fg-secondary: var(--n-700);
+  --fg-tertiary: var(--n-500);
+  --fg-disabled: var(--n-400);
+  --fg-inverse: var(--n-0);
+  --fg-brand: var(--palette-primary);
+  --fg-on-brand: var(--n-0);
+  --fg-on-subtle: var(--palette-primary-deep);
+
+  --fg-success: var(--status-success);
+  --fg-warning: var(--status-warning);
+  --fg-danger: var(--status-danger);
+
+  --border-subtle: var(--n-100);
+  --border-default: var(--n-200);
+  --border-strong: var(--n-300);
+  --border-brand: var(--palette-primary);
+
+  --focus-ring: var(--palette-primary);
+
+  /* Shadow ink. The dark theme deepens opacity rather than adding spread — a
+     light-theme shadow simply disappears on a dark canvas. */
+  --shadow-ink: 21 19 18;
+  --shadow-scale: 1;
+
+  /* The motif's material: lit from above, light at the top edge and saturated
+     at the bottom, sampled from the active palette's ramp. A flat
+     brand-coloured motif is a bug, which is why this is a ramp. */
+  --motif-1: var(--palette-soft);
+  --motif-2: var(--palette-mid);
+  --motif-3: var(--palette-primary);
+}
+
+[data-theme='dark'] {
+  --bg-canvas: var(--n-950);
+  --bg-surface: #1c1a19;
+  --bg-surface-alt: #232120;
+  --bg-inverse: var(--n-0);
+  --bg-subtle: #2a2827;
+  --bg-brand-subtle: var(--palette-soft-dark);
+
+  --fg-primary: #f5f4f3;
+  --fg-secondary: #c9c6c4;
+  --fg-tertiary: #94908d;
+  --fg-disabled: #6b6764;
+  --fg-inverse: var(--n-950);
+  --fg-brand: var(--palette-primary-lite);
+  --fg-on-subtle: var(--palette-primary-lite);
+
+  --border-subtle: #2e2b2a;
+  --border-default: #3d3937;
+  --border-strong: #55504d;
+  --border-brand: var(--palette-primary-lite);
+
+  --focus-ring: var(--palette-primary-lite);
+
+  --shadow-ink: 0 0 0;
+  --shadow-scale: 5.5;
+
+  --motif-1: var(--palette-primary-lite);
+  --motif-2: var(--palette-mid);
+  --motif-3: var(--palette-primary-deep);
+}
+
+/* ------------------------------------------------------------------ *
+ * Space, radius, elevation, motion — palette-independent, so these need no
+ * layer discipline.
+ * ------------------------------------------------------------------ */
+
+:root {
+  /* Base unit 4. Nothing off-scale. */
+  --x1: 4px;
+  --x2: 8px;
+  --x3: 12px;
+  --x4: 16px;
+  --x5: 20px;
+  --x6: 24px;
+  --x8: 32px;
+  --x10: 40px;
+  --x12: 48px;
+  --x16: 64px;
+  --x20: 80px;
+  --x24: 96px;
+
+  /* Generous by design — soft corners echo the cusped geometry of the motif.
+     Buttons, chips and inputs are pill or `md`; cards are `xl`. */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-xxl: 32px;
+  --r-pill: 999px;
+
+  /* Low-contrast and warm-tinted. CSS blur is roughly twice the SwiftUI shadow
+     radius, which is where these numbers come from. */
+  --e-xs: 0 1px 2px rgb(var(--shadow-ink) / calc(0.06 * var(--shadow-scale)));
+  --e-sm: 0 2px 6px rgb(var(--shadow-ink) / calc(0.07 * var(--shadow-scale)));
+  --e-md: 0 6px 18px rgb(var(--shadow-ink) / calc(0.09 * var(--shadow-scale)));
+  --e-lg: 0 14px 40px rgb(var(--shadow-ink) / calc(0.12 * var(--shadow-scale)));
+
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 140ms;
+  --t-normal: 240ms;
+  --t-slow: 420ms;
+  /* The brand's signature cadence. The loader, the "thinking" motif and any
+     breathing state all share it, so the product reads as one metronome. */
+  --t-pulse: 2000ms;
+
+  /* The shared interactive contract: ≥44px targets, everywhere. */
+  --tap-target: 44px;
+  --focus-width: 2px;
+  --focus-offset: 2px;
+  --disabled-opacity: 0.45;
+
+  --measure: 68ch;
+  --page-max: 1120px;
+}

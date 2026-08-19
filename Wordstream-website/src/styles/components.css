@@ -1,0 +1,226 @@
+/*
+ * components.css
+ * Wordstream
+ *
+ * The shared contract from the app's Components.swift, applied to every
+ * interactive element here: ≥44px target, a visible focus ring, a disabled
+ * state at 45% that is not the only signal, and survival at 200% text zoom.
+ *
+ * Note what is deliberately absent: gradient-filled controls. The system caps
+ * the gradient budget at two for the whole product, and records that filling
+ * buttons and progress bars with one was a mistake corrected away from — it
+ * read as decoration applied on top of the UI rather than as the UI. Emphasis
+ * here comes from fill and weight. The motif's ramp is the only gradient on
+ * this site, and it is a material, not a decoration.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Buttons
+ * ------------------------------------------------------------------ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--x2);
+  height: var(--tap-target);
+  padding-inline: var(--x5);
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 21px;
+  white-space: nowrap;
+  transition:
+    background-color var(--t-fast) var(--ease-standard),
+    border-color var(--t-fast) var(--ease-standard),
+    transform var(--t-fast) var(--ease-standard);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn[aria-disabled='true'],
+.btn:disabled {
+  opacity: var(--disabled-opacity);
+  pointer-events: none;
+}
+
+.btn--sm {
+  height: 36px;
+  padding-inline: var(--x3);
+}
+
+.btn--lg {
+  height: 56px;
+  padding-inline: var(--x6);
+  font-size: 16px;
+}
+
+.btn--primary {
+  background: var(--bg-brand);
+  color: var(--fg-on-brand);
+}
+
+.btn--primary:hover {
+  background: var(--bg-brand-hover);
+}
+
+.btn--secondary {
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  border-color: var(--border-default);
+}
+
+.btn--secondary:hover {
+  background: var(--bg-subtle);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--fg-brand);
+}
+
+.btn--ghost:hover {
+  background: var(--bg-brand-subtle);
+}
+
+.btn--full {
+  width: 100%;
+}
+
+/* ------------------------------------------------------------------ *
+ * Surfaces — cards are `xl` radius, subtle border, `xs` shadow.
+ * ------------------------------------------------------------------ */
+
+.card {
+  /* Grid and flex children default to `min-width: auto`, which lets a wide
+     child — a <pre>, most of all — push its whole track past the viewport and
+     scroll the page sideways instead of scrolling itself. */
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xl);
+  padding: var(--x5);
+  box-shadow: var(--e-xs);
+  transition:
+    background-color var(--t-normal) var(--ease-standard),
+    border-color var(--t-normal) var(--ease-standard),
+    box-shadow var(--t-normal) var(--ease-standard);
+}
+
+.card--alt {
+  background: var(--bg-surface-alt);
+}
+
+.card--brand {
+  background: var(--bg-brand-subtle);
+  border-color: var(--border-brand);
+}
+
+/* ------------------------------------------------------------------ *
+ * Status
+ *
+ * Colour is never the sole carrier of meaning, so every badge pairs a dot with
+ * a word — the dot reads at a glance, the word survives a colour-blind viewer
+ * and a screen reader.
+ * ------------------------------------------------------------------ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--x2);
+  padding: 6px var(--x3);
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
+  color: var(--fg-secondary);
+}
+
+.badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  flex: none;
+}
+
+.badge--neutral .badge__dot {
+  background: var(--fg-tertiary);
+}
+.badge--brand .badge__dot {
+  background: var(--fg-brand);
+}
+.badge--success .badge__dot {
+  background: var(--fg-success);
+}
+.badge--warning .badge__dot {
+  background: var(--fg-warning);
+}
+.badge--danger .badge__dot {
+  background: var(--fg-danger);
+}
+
+/* ------------------------------------------------------------------ *
+ * Section header — a mono uppercase eyebrow over a plain-language headline.
+ * The app's assistant-state pairing, reused as the standard section header.
+ * ------------------------------------------------------------------ */
+
+.section-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--x2);
+}
+
+.section-header__eyebrow {
+  color: var(--fg-tertiary);
+}
+
+.section-header__subtitle {
+  color: var(--fg-secondary);
+  max-width: var(--measure);
+}
+
+/* ------------------------------------------------------------------ *
+ * Code
+ * ------------------------------------------------------------------ */
+
+code,
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+kbd {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: var(--r-xs);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+pre {
+  background: var(--bg-inverse);
+  color: var(--n-25);
+  border-radius: var(--r-lg);
+  padding: var(--x4) var(--x5);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 21px;
+}
+
+[data-theme='dark'] pre {
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-subtle);
+  color: var(--fg-secondary);
+}
+
+pre code {
+  font-size: inherit;
+}

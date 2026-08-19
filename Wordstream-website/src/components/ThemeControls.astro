@@ -1,0 +1,307 @@
+---
+/*
+ * The app's palette picker and appearance switch, on the web.
+ *
+ * Worth having on a marketing site for once: the whole claim of the design
+ * system is that a palette swap is a token swap rather than a rewrite. Letting
+ * a visitor drive it is the shortest possible proof, and it is the same six
+ * themes and the same three-dot swatch the app ships.
+ */
+import { PALETTES } from '../lib/palettes';
+
+const APPEARANCES = [
+  { id: 'system', label: 'Match system' },
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
+];
+---
+
+<div class="theme" data-theme-controls>
+  <button
+    class="theme__trigger"
+    type="button"
+    aria-expanded="false"
+    aria-controls="theme-panel"
+    data-theme-trigger
+  >
+    <span class="theme__dots" aria-hidden="true">
+      <span class="theme__dot" data-swatch="start"></span>
+      <span class="theme__dot" data-swatch="end"></span>
+      <span class="theme__dot" data-swatch="soft"></span>
+    </span>
+    <span class="body-sm medium">Theme</span>
+  </button>
+
+  <div class="theme__panel card" id="theme-panel" hidden data-theme-panel>
+    <p class="label section-header__eyebrow">Palette</p>
+    <ul class="theme__list" role="list">
+      {
+        PALETTES.map((palette) => (
+          <li>
+            <button
+              class="theme__option"
+              type="button"
+              data-palette-option={palette.id}
+              aria-pressed="false"
+            >
+              <span class="theme__dots" aria-hidden="true">
+                <span class="theme__dot" style={`background:${palette.swatch.rampStart}`} />
+                <span class="theme__dot" style={`background:${palette.swatch.rampEnd}`} />
+                <span class="theme__dot" style={`background:${palette.swatch.soft}`} />
+              </span>
+              <span class="theme__labels">
+                <span class="body-sm medium">{palette.name}</span>
+                <span class="caption fg-tertiary">{palette.character}</span>
+              </span>
+              <span class="theme__check" aria-hidden="true">✓</span>
+            </button>
+          </li>
+        ))
+      }
+    </ul>
+
+    <p class="label section-header__eyebrow theme__divider">Appearance</p>
+    <div class="theme__appearance" role="group" aria-label="Appearance">
+      {
+        APPEARANCES.map((mode) => (
+          <button
+            class="theme__mode body-sm"
+            type="button"
+            data-appearance-option={mode.id}
+            aria-pressed="false"
+          >
+            {mode.label}
+          </button>
+        ))
+      }
+    </div>
+  </div>
+</div>
+
+<style>
+  .theme {
+    position: relative;
+  }
+
+  .theme__trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--x2);
+    height: 36px;
+    padding-inline: var(--x3);
+    border-radius: var(--r-pill);
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    color: var(--fg-primary);
+    transition:
+      background-color var(--t-fast) var(--ease-standard),
+      border-color var(--t-fast) var(--ease-standard);
+  }
+
+  .theme__trigger:hover {
+    background: var(--bg-subtle);
+  }
+
+  .theme__dots {
+    display: inline-flex;
+    flex: none;
+  }
+
+  .theme__dot {
+    width: 14px;
+    height: 14px;
+    border-radius: var(--r-pill);
+    box-shadow: 0 0 0 1.5px var(--bg-surface);
+  }
+
+  .theme__dot + .theme__dot {
+    margin-left: -4px;
+  }
+
+  /* The trigger's own swatch tracks the live palette, so it always shows what
+     is currently applied. */
+  .theme__trigger .theme__dot[data-swatch='start'] {
+    background: var(--palette-primary-deep);
+  }
+  .theme__trigger .theme__dot[data-swatch='end'] {
+    background: var(--palette-accent);
+  }
+  .theme__trigger .theme__dot[data-swatch='soft'] {
+    background: var(--palette-soft);
+  }
+
+  .theme__panel {
+    position: absolute;
+    top: calc(100% + var(--x2));
+    right: 0;
+    z-index: 60;
+    width: min(300px, calc(100vw - var(--x8)));
+    padding: var(--x4);
+    box-shadow: var(--e-lg);
+    animation: theme-in var(--t-normal) var(--ease-entrance);
+  }
+
+  @keyframes theme-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+  }
+
+  .theme__list {
+    list-style: none;
+    margin: var(--x2) 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .theme__option {
+    display: flex;
+    align-items: center;
+    gap: var(--x3);
+    width: 100%;
+    min-height: var(--tap-target);
+    padding-inline: var(--x3);
+    border-radius: var(--r-md);
+    border: 1px solid transparent;
+    text-align: left;
+    transition: background-color var(--t-fast) var(--ease-standard);
+  }
+
+  .theme__option:hover {
+    background: var(--bg-subtle);
+  }
+
+  .theme__option[aria-pressed='true'] {
+    background: var(--bg-brand-subtle);
+    border-color: var(--border-brand);
+  }
+
+  .theme__labels {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .theme__check {
+    color: var(--fg-brand);
+    font-size: 12px;
+    font-weight: 700;
+    opacity: 0;
+  }
+
+  .theme__option[aria-pressed='true'] .theme__check {
+    opacity: 1;
+  }
+
+  .theme__divider {
+    margin-top: var(--x4);
+    padding-top: var(--x4);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .theme__appearance {
+    display: flex;
+    gap: var(--x1);
+    margin-top: var(--x2);
+    padding: var(--x1);
+    border-radius: var(--r-md);
+    background: var(--bg-subtle);
+  }
+
+  .theme__mode {
+    flex: 1;
+    min-height: 36px;
+    border-radius: var(--r-sm);
+    color: var(--fg-secondary);
+    transition:
+      background-color var(--t-fast) var(--ease-standard),
+      color var(--t-fast) var(--ease-standard);
+  }
+
+  .theme__mode[aria-pressed='true'] {
+    background: var(--bg-surface);
+    color: var(--fg-primary);
+    font-weight: 500;
+    box-shadow: var(--e-xs);
+  }
+</style>
+
+<script>
+  const STORE_PALETTE = 'wordstream:palette';
+  const STORE_APPEARANCE = 'wordstream:appearance';
+
+  const root = document.documentElement;
+  const container = document.querySelector<HTMLElement>('[data-theme-controls]');
+  const trigger = document.querySelector<HTMLButtonElement>('[data-theme-trigger]');
+  const panel = document.querySelector<HTMLElement>('[data-theme-panel]');
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+  function currentAppearance(): string {
+    return localStorage.getItem(STORE_APPEARANCE) ?? 'system';
+  }
+
+  function applyAppearance(mode: string) {
+    const dark = mode === 'dark' || (mode === 'system' && systemDark.matches);
+    root.dataset.theme = dark ? 'dark' : 'light';
+    root.style.colorScheme = dark ? 'dark' : 'light';
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-appearance-option]',
+    )) {
+      button.setAttribute('aria-pressed', String(button.dataset.appearanceOption === mode));
+    }
+  }
+
+  function applyPalette(id: string) {
+    root.dataset.palette = id;
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-palette-option]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.paletteOption === id));
+    }
+  }
+
+  function setOpen(open: boolean) {
+    if (!panel || !trigger) return;
+    panel.hidden = !open;
+    trigger.setAttribute('aria-expanded', String(open));
+  }
+
+  applyPalette(localStorage.getItem(STORE_PALETTE) ?? 'dawn');
+  applyAppearance(currentAppearance());
+
+  // Only follow the system when the visitor hasn't overridden it.
+  systemDark.addEventListener('change', () => {
+    if (currentAppearance() === 'system') applyAppearance('system');
+  });
+
+  trigger?.addEventListener('click', () => setOpen(panel?.hidden ?? false));
+
+  document.addEventListener('click', (event) => {
+    if (!container?.contains(event.target as Node)) setOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !panel?.hidden) {
+      setOpen(false);
+      trigger?.focus();
+    }
+  });
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-palette-option]')) {
+    button.addEventListener('click', () => {
+      const id = button.dataset.paletteOption!;
+      localStorage.setItem(STORE_PALETTE, id);
+      applyPalette(id);
+    });
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-appearance-option]')) {
+    button.addEventListener('click', () => {
+      const mode = button.dataset.appearanceOption!;
+      localStorage.setItem(STORE_APPEARANCE, mode);
+      applyAppearance(mode);
+    });
+  }
+</script>

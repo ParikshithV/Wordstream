@@ -1,0 +1,94 @@
+---
+import '../styles/global.css';
+import '../styles/components.css';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import { SITE } from '../lib/site';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = `${SITE.name} — ${SITE.tagline}`,
+  description = SITE.description,
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" data-palette="dawn" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link
+      rel="preload"
+      href="/fonts/PlusJakartaSans-Regular.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/InstrumentSerif-Regular.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+
+    {/* Resolve the stored palette and appearance before first paint, so a
+        returning visitor never sees a frame of the wrong theme. */}
+    <script is:inline>
+      (() => {
+        const root = document.documentElement;
+        try {
+          const palette = localStorage.getItem('wordstream:palette');
+          if (palette) root.dataset.palette = palette;
+          const appearance = localStorage.getItem('wordstream:appearance') ?? 'system';
+          const dark =
+            appearance === 'dark' ||
+            (appearance === 'system' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          root.dataset.theme = dark ? 'dark' : 'light';
+          root.style.colorScheme = dark ? 'dark' : 'light';
+        } catch {
+          /* Private mode or storage disabled — the light default stands. */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <a class="skip-link btn btn--primary btn--sm" href="#main">Skip to content</a>
+    <Nav />
+    <main id="main">
+      <slot />
+    </main>
+    <Footer />
+
+    <style>
+      .skip-link {
+        position: fixed;
+        top: var(--x3);
+        left: var(--x3);
+        z-index: 100;
+        transform: translateY(-200%);
+      }
+
+      .skip-link:focus-visible {
+        transform: none;
+      }
+    </style>
+  </body>
+</html>

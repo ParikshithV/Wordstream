@@ -1,0 +1,77 @@
+---
+/*
+ * The Wordstream mark: three concentric rosette rings, stroked at one medium
+ * weight, `currentColor`-based so it survives anywhere.
+ *
+ * The site used to carry three marks — the filled lotus, the ring-and-beads
+ * line mandala, and the ogee seed — which is three logos for one app. This is
+ * the same drawing the app uses at every size, from the 18pt menu bar upward;
+ * only size and opacity change between placements.
+ */
+import { rosettePath, MOTIF_RINGS, markStrokeWidth } from '../lib/motif';
+
+interface Props {
+  size?: number;
+  opacity?: number;
+  /** Breathes on the 2s brand cadence. Static under reduced motion. */
+  pulse?: boolean;
+  class?: string;
+}
+
+const { size = 24, opacity = 1, pulse = false, class: className = '' } = Astro.props;
+
+const SIDE = 120;
+const weight = markStrokeWidth(SIDE);
+// Inset by half the stroke so the outermost ring sits inside the viewBox
+// instead of being clipped by it.
+const rings = MOTIF_RINGS.map((ring) => ({
+  d: rosettePath(SIDE / 2, SIDE / 2, ((SIDE - weight) / 2) * ring.scale, ring.lobes, ring.rotation),
+}));
+---
+
+<svg
+  class:list={['mark', pulse && 'pulse', className]}
+  width={size}
+  height={size}
+  viewBox={`0 0 ${SIDE} ${SIDE}`}
+  fill="none"
+  opacity={opacity}
+  role="presentation"
+  aria-hidden="true"
+>
+  {
+    rings.map((ring) => (
+      <path
+        d={ring.d}
+        stroke="currentColor"
+        stroke-width={weight}
+        stroke-linejoin="round"
+      />
+    ))
+  }
+</svg>
+
+<style>
+  .pulse {
+    animation: motif-breathe var(--t-pulse) var(--ease-standard) infinite alternate;
+    transform-origin: center;
+  }
+
+  @keyframes motif-breathe {
+    from {
+      transform: scale(0.94);
+      opacity: 0.82;
+    }
+    to {
+      transform: scale(1.06);
+      opacity: 1;
+    }
+  }
+
+  /* The pulse becomes a static mark. */
+  @media (prefers-reduced-motion: reduce) {
+    .pulse {
+      animation: none;
+    }
+  }
+</style>
