@@ -1,0 +1,17 @@
+.DS_Store
+
+## Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+
+## Swift Package Manager
+.build/
+.swiftpm/
+
+## Website
+node_modules/
+dist/
+.astro/

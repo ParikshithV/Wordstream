@@ -48,7 +48,21 @@ enum Keychain {
         return string
     }
 
+    /// Existence without decryption.
+    ///
+    /// This used to call `get`, which meant every dictation decrypted the API
+    /// key just to ask whether one had been saved — `EnhancementPipeline.resolve`
+    /// reaches it through `isAvailable`, on the path the user is waiting behind.
+    /// Testing for the item alone answers the same question. The old version also
+    /// rejected an empty value, which `set` refuses to store in the first place.
     static func has(_ account: String) -> Bool {
-        get(account)?.isEmpty == false
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: false,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 }

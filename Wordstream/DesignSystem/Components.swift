@@ -224,6 +224,20 @@ struct GatewayProgressBar: View {
 
 /// A labelled row with a trailing control. The description is not optional flavour
 /// — it is where a setting's real cost gets stated instead of buried.
+/// The hairline between rows inside a card.
+///
+/// This existed as `Divider().overlay(theme.borderSubtle)` at fifteen call sites
+/// across four files, which made the row separator a spelling rather than a
+/// component — the kind of thing that drifts the moment someone types it from
+/// memory instead of copying it.
+struct SettingDivider: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Divider().overlay(theme.borderSubtle)
+    }
+}
+
 struct SettingRow<Control: View>: View {
     @Environment(\.theme) private var theme
     var title: String
