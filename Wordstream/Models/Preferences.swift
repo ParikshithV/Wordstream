@@ -127,6 +127,33 @@ enum AppearanceMode: String, CaseIterable, Codable {
 final class Preferences {
     static let shared = Preferences()
 
+    /// What a fresh install has.
+    ///
+    /// Named constants rather than literals inline in `init`, because `reset()`
+    /// needs the same values and two copies of them is exactly the kind of
+    /// duplication that drifts — a default changed in one place and not the
+    /// other makes Reset put the app into a state no install has ever been in.
+    enum Default {
+        static let dictationShortcut = Shortcut.rightOption
+        static let commandModeShortcut: Shortcut? = nil
+        static let handsFreeOnDoubleTap = true
+        static let modelVariant = ""
+        static let language = "en"
+        static let showAllSpeechModels = false
+        static let livePreview = true
+        static let insertionMode = InsertionMode.paste
+        static let playSounds = true
+        static let enhancementTier = EnhancementTier.auto
+        static let enhancementStyle = EnhancementStyle.cleanUp
+        static let removeFillers = true
+        static let spokenPunctuation = true
+        static let cloudProvider = "anthropic"
+        static var mlxModelID: String { MLXEnhancer.defaultModelID }
+        static let palette = Palette.dawn
+        static let appearance = AppearanceMode.system
+        static let hasCompletedOnboarding = false
+    }
+
     private let defaults = UserDefaults.standard
 
     private func set<T>(_ key: String, _ value: T) {
@@ -242,24 +269,54 @@ final class Preferences {
 
     private init() {
         let d = UserDefaults.standard
-        dictationShortcut = Preferences.load(d, "shortcut.dictation") ?? .rightOption
-        commandModeShortcut = Preferences.load(d, "shortcut.commandMode")
-        handsFreeOnDoubleTap = d.object(forKey: "handsFreeOnDoubleTap") as? Bool ?? true
-        modelVariant = d.string(forKey: "modelVariant") ?? ""
-        language = d.string(forKey: "language") ?? "en"
-        livePreview = d.object(forKey: "livePreview") as? Bool ?? true
-        showAllSpeechModels = d.bool(forKey: "showAllSpeechModels")
-        insertionMode = InsertionMode(rawValue: d.string(forKey: "insertionMode") ?? "") ?? .paste
-        playSounds = d.object(forKey: "playSounds") as? Bool ?? true
-        enhancementTier = EnhancementTier(rawValue: d.string(forKey: "enhancementTier") ?? "") ?? .auto
-        enhancementStyle = EnhancementStyle(rawValue: d.string(forKey: "enhancementStyle") ?? "") ?? .cleanUp
-        removeFillers = d.object(forKey: "removeFillers") as? Bool ?? true
-        spokenPunctuation = d.object(forKey: "spokenPunctuation") as? Bool ?? true
-        cloudProvider = d.string(forKey: "cloudProvider") ?? "anthropic"
-        mlxModelID = d.string(forKey: "mlxModelID") ?? MLXEnhancer.defaultModelID
-        palette = Palette(rawValue: d.string(forKey: "palette") ?? "") ?? .dawn
-        appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .system
-        hasCompletedOnboarding = d.bool(forKey: "hasCompletedOnboarding")
+        dictationShortcut = Preferences.load(d, "shortcut.dictation") ?? Default.dictationShortcut
+        commandModeShortcut = Preferences.load(d, "shortcut.commandMode") ?? Default.commandModeShortcut
+        handsFreeOnDoubleTap = d.object(forKey: "handsFreeOnDoubleTap") as? Bool ?? Default.handsFreeOnDoubleTap
+        modelVariant = d.string(forKey: "modelVariant") ?? Default.modelVariant
+        language = d.string(forKey: "language") ?? Default.language
+        livePreview = d.object(forKey: "livePreview") as? Bool ?? Default.livePreview
+        showAllSpeechModels = d.object(forKey: "showAllSpeechModels") as? Bool ?? Default.showAllSpeechModels
+        insertionMode = InsertionMode(rawValue: d.string(forKey: "insertionMode") ?? "") ?? Default.insertionMode
+        playSounds = d.object(forKey: "playSounds") as? Bool ?? Default.playSounds
+        enhancementTier = EnhancementTier(rawValue: d.string(forKey: "enhancementTier") ?? "") ?? Default.enhancementTier
+        enhancementStyle = EnhancementStyle(rawValue: d.string(forKey: "enhancementStyle") ?? "") ?? Default.enhancementStyle
+        removeFillers = d.object(forKey: "removeFillers") as? Bool ?? Default.removeFillers
+        spokenPunctuation = d.object(forKey: "spokenPunctuation") as? Bool ?? Default.spokenPunctuation
+        cloudProvider = d.string(forKey: "cloudProvider") ?? Default.cloudProvider
+        mlxModelID = d.string(forKey: "mlxModelID") ?? Default.mlxModelID
+        palette = Palette(rawValue: d.string(forKey: "palette") ?? "") ?? Default.palette
+        appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? Default.appearance
+        hasCompletedOnboarding = d.object(forKey: "hasCompletedOnboarding") as? Bool ?? Default.hasCompletedOnboarding
+    }
+
+    /// Puts every setting back to its first-run value.
+    ///
+    /// Assignment rather than wiping the keys out of `UserDefaults`, so each
+    /// property's `didSet` runs — the observers are what tell SwiftUI the value
+    /// changed, and removing the keys underneath the object would leave every
+    /// open window showing the old settings until relaunch.
+    ///
+    /// `applyAppKitAppearance()` is not called here; `appearance`'s own `didSet`
+    /// already does it.
+    func reset() {
+        dictationShortcut = Default.dictationShortcut
+        commandModeShortcut = Default.commandModeShortcut
+        handsFreeOnDoubleTap = Default.handsFreeOnDoubleTap
+        modelVariant = Default.modelVariant
+        language = Default.language
+        livePreview = Default.livePreview
+        showAllSpeechModels = Default.showAllSpeechModels
+        insertionMode = Default.insertionMode
+        playSounds = Default.playSounds
+        enhancementTier = Default.enhancementTier
+        enhancementStyle = Default.enhancementStyle
+        removeFillers = Default.removeFillers
+        spokenPunctuation = Default.spokenPunctuation
+        cloudProvider = Default.cloudProvider
+        mlxModelID = Default.mlxModelID
+        palette = Default.palette
+        appearance = Default.appearance
+        hasCompletedOnboarding = Default.hasCompletedOnboarding
     }
 
     private func store<T: Codable>(_ value: T?, _ key: String) {

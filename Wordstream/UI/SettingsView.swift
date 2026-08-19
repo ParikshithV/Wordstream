@@ -154,6 +154,83 @@ private struct GeneralSettings: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+
+        ResetSettings(coordinator: coordinator)
+    }
+}
+
+// MARK: - Reset
+
+/// The one destructive control in the app, at the bottom of the page it is least
+/// likely to be hit on the way to something else.
+///
+/// Three things keep it from being a trap. The scope is chosen *before* the button
+/// is pressed rather than inside the confirmation, so what is about to happen is
+/// readable while there is still nothing at stake. The confirmation names that
+/// scope back rather than asking "are you sure" about an unstated thing. And the
+/// button is disabled mid-dictation — resetting between transcription and insertion
+/// would tear the pipeline's state out from under a running utterance.
+private struct ResetSettings: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.modelContext) private var modelContext
+    var coordinator: DictationCoordinator
+
+    @State private var scope: AppReset.Scope = .settingsAndData
+    @State private var isConfirming = false
+    @State private var isResetting = false
+
+    var body: some View {
+        SectionHeader(
+            eyebrow: "Reset",
+            title: "Start over",
+            subtitle: "Puts Wordstream back to how it was before you first opened it, then quits. This can\u{2019}t be undone."
+        )
+
+        GatewayCard {
+            VStack(alignment: .leading, spacing: Space.x4) {
+                GatewayRadioGroup(
+                    selection: $scope,
+                    options: AppReset.Scope.allCases.map { ($0, $0.displayName, $0.summary) }
+                )
+
+                SettingDivider()
+
+                HStack(spacing: Space.x3) {
+                    Button(isResetting ? "Resetting\u{2026}" : "Reset Wordstream\u{2026}") {
+                        isConfirming = true
+                    }
+                    .buttonStyle(GatewayButtonStyle(variant: .danger, size: .md))
+                    .disabled(isResetting || coordinator.state.isBusy)
+
+                    if coordinator.state.isBusy {
+                        Text("Finish the dictation in progress first.")
+                            .typeStyle(Typography.caption)
+                            .foregroundStyle(theme.fgTertiary)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Reset Wordstream?",
+            isPresented: $isConfirming,
+            titleVisibility: .visible
+        ) {
+            Button("Reset and Quit", role: .destructive) { reset() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(scope.summary)\n\nWordstream quits when this finishes. Open it again and it starts at the welcome screen.")
+        }
+    }
+
+    /// Nothing runs after this: `AppReset.perform` ends by terminating the app,
+    /// so there is no completion to handle and no state to put back.
+    private func reset() {
+        isResetting = true
+        Task {
+            await AppReset.perform(scope, coordinator: coordinator, container: modelContext.container)
+        }
     }
 }
 

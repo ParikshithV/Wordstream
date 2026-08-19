@@ -86,9 +86,20 @@ final class MLXEnhancer: TextEnhancer {
             loadedID = id
             return loaded
         }
+
+        func unload() {
+            container = nil
+            loadedID = nil
+        }
     }
 
     private static let holder = ModelHolder()
+
+    /// Drops the warm container, so weights deleted from disk are also gone from
+    /// memory rather than quietly serving one more dictation.
+    static func unloadFromMemory() async {
+        await holder.unload()
+    }
 
     var isAvailable: Bool {
         get async { isModelDownloaded }
@@ -135,13 +146,34 @@ final class MLXEnhancer: TextEnhancer {
         throw EnhancementError.unavailable("Local MLX model support isn't compiled into this build.")
     }
 
+    static func unloadFromMemory() async {}
+
     #endif
+
+    /// Where the Hub client keeps one model's weights.
+    private static func cacheFolder(for modelID: String) -> URL {
+        cacheDirectory.appending(
+            path: "models--\(modelID.replacingOccurrences(of: "/", with: "--"))",
+            directoryHint: .isDirectory
+        )
+    }
 
     /// Whether the weights are already on disk, so Settings can distinguish
     /// "not set up" from "downloading" without starting a download to find out.
     var isModelDownloaded: Bool {
-        let folder = modelID.replacingOccurrences(of: "/", with: "--")
-        let path = Self.cacheDirectory.appending(path: "models--\(folder)")
-        return FileManager.default.fileExists(atPath: path.path)
+        FileManager.default.fileExists(atPath: Self.cacheFolder(for: modelID).path)
+    }
+
+    /// Removes the weights for every model this app offers.
+    ///
+    /// Folder by folder rather than emptying `cacheDirectory`, because
+    /// `~/.cache/huggingface` is shared with every other Hub client on the Mac —
+    /// python `transformers`, other apps — and clearing it wholesale would delete
+    /// gigabytes Wordstream never downloaded.
+    static func deleteDownloadedModels() async {
+        await unloadFromMemory()
+        for model in availableModels {
+            try? FileManager.default.removeItem(at: cacheFolder(for: model.id))
+        }
     }
 }

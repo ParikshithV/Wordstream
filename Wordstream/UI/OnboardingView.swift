@@ -18,6 +18,8 @@ struct OnboardingView: View {
     @State private var step: Step = .welcome
     @State private var prefs = Preferences.shared
 
+    private var engine: WhisperEngine { coordinator.engine }
+
     enum Step: Int, CaseIterable {
         case welcome, permissions, model, ready
     }
@@ -90,6 +92,14 @@ struct OnboardingView: View {
                 subtitle: "Speech is transcribed by OpenAI\u{2019}s Whisper model running locally on the Neural Engine. Nothing is uploaded unless you explicitly turn on the optional cloud cleanup later."
             )
 
+            // Said plainly on the first screen, because the download has already
+            // begun by the time this is read. A transfer this size starting on
+            // its own is fine; starting unannounced is not.
+            Text(prefetchNote)
+                .typeStyle(Typography.caption)
+                .foregroundStyle(theme.fgTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Button("Get started") { step = .permissions }
                 .buttonStyle(GatewayButtonStyle(variant: .primary, size: .lg))
         }
@@ -100,7 +110,7 @@ struct OnboardingView: View {
             SectionHeader(
                 eyebrow: "Step 1 of 2",
                 title: "Three permissions",
-                subtitle: "macOS asks for each separately. Without all three the dictation key silently does nothing."
+                subtitle: permissionsSubtitle
             )
 
             GatewayCard {
@@ -146,27 +156,85 @@ struct OnboardingView: View {
         }
     }
 
+    /// What this step says once it knows where it stands.
+    ///
+    /// The permissions can already be in place before this screen is ever
+    /// reached — a reinstall keeps TCC grants, and a second run of onboarding
+    /// finds everything switched on. Telling someone macOS is about to ask them
+    /// three times, when it is going to ask them nothing, describes an app they
+    /// aren't using.
+    private var permissionsSubtitle: String {
+        coordinator.permissions.allGranted
+            ? "All three are already granted \u{2014} nothing to do here. They're listed so you can see what Wordstream holds, and you can revoke any of them in System Settings."
+            : "macOS asks for each separately. Without all three the dictation key silently does nothing."
+    }
+
     private var model: some View {
         VStack(alignment: .leading, spacing: Space.x5) {
             SectionHeader(
                 eyebrow: "Step 2 of 2",
-                title: "Choose a speech model",
-                subtitle: "Bigger models hear you more accurately and take longer to download. Each one is a one-off download that then runs offline — you can change your mind later in Settings."
+                title: "Your speech model",
+                subtitle: modelSubtitle
             )
 
             GatewayCard {
-                ModelPicker(coordinator: coordinator, allowsAdvanced: false) { step = .ready }
+                ModelPicker(
+                    coordinator: coordinator,
+                    allowsAdvanced: false,
+                    collapsesToRecommendation: true
+                )
             }
 
-            // No Continue button: the download button in each row is the action,
-            // and the step advances itself once a model is loaded. A second
-            // primary button would only ask the user to confirm something they
-            // already did.
+            // This step used to have no Continue button, because pressing
+            // Download in a row was the action and the step advanced itself once
+            // the model loaded. Neither is true now that the download starts on
+            // its own: someone who accepts the recommendation presses nothing at
+            // all, and by the time they arrive the model may already be loaded —
+            // which under the old rule left the step with no way out of it.
+            Button("Continue") { step = .ready }
+                .buttonStyle(GatewayButtonStyle(variant: .primary, size: .lg))
+                .disabled(!engine.state.isReady)
+
+            if !engine.state.isReady {
+                Text("Ready to continue once a model has finished loading \u{2014} until then there is nothing to transcribe with.")
+                    .typeStyle(Typography.caption)
+                    .foregroundStyle(theme.fgTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Text("Saved to Application Support. Wordstream never asks for your Documents, Desktop or Downloads folders.")
                 .typeStyle(Typography.caption)
                 .foregroundStyle(theme.fgTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// What the model step says, given that its work is already done.
+    ///
+    /// The list underneath is one row — the model this Mac was matched with and
+    /// how far its download has got — so the subtitle's job is to explain why
+    /// there is nothing to choose, not to walk through a comparison. The trade
+    /// between models only becomes worth describing once someone presses "Choose
+    /// a different model", and it is described in the rows themselves there.
+    private var modelSubtitle: String {
+        engine.state.isReady
+            ? "Already downloaded and ready \u{2014} nothing to choose. Bigger models hear you more accurately at the cost of load time and memory; you can swap below, or later in Settings."
+            : "The one that suits this Mac started downloading when Wordstream opened. Nothing to do but let it finish \u{2014} or pick a different one below, which you can also do later in Settings."
+    }
+
+    /// What the welcome screen says about the download already running.
+    ///
+    /// Named where it can be, because "Sharp is downloading" is a far better
+    /// sentence than "a model is downloading" — but the catalogue is a network
+    /// fetch, so on the first second of first run the name genuinely isn't known
+    /// yet and the vaguer line is the honest one.
+    private var prefetchNote: String {
+        guard let variant = engine.preparingVariant ?? engine.recommendedCuratedVariant,
+              let model = ModelCatalogue.model(for: variant)
+        else {
+            return "The speech model best suited to this Mac is already downloading in the background."
+        }
+        return "\(model.name) \u{2014} the speech model best suited to this Mac \u{2014} is already downloading in the background. \(model.sizeText), once."
     }
 
     private var ready: some View {
@@ -191,15 +259,6 @@ struct OnboardingView: View {
                 onFinish()
             }
             .buttonStyle(GatewayButtonStyle(variant: .primary, size: .lg))
-        }
-    }
-}
-
-private extension WhisperEngine.State {
-    var isBusyLoading: Bool {
-        switch self {
-        case .downloading, .loading: true
-        default: false
         }
     }
 }

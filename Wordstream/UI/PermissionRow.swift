@@ -27,6 +27,15 @@ struct PermissionRow: View {
 
     private var status: PermissionsManager.Status { permissions.status(kind) }
 
+    /// Whether the system has already put its question, from either side.
+    ///
+    /// `didRequest` only covers asks made in this window; a permission refused
+    /// on an earlier run is just as spent, and the system's own status says so
+    /// for the two APIs that can tell. Reading both means someone returning to
+    /// a previously-denied permission is offered the settings pane straight
+    /// away instead of pressing an Allow button that macOS will ignore.
+    private var wasAsked: Bool { didRequest || permissions.hasBeenPrompted(kind) }
+
     var body: some View {
         HStack(alignment: .top, spacing: Space.x4) {
             Image(systemName: status.isGranted ? "checkmark.circle.fill" : "circle")
@@ -42,7 +51,7 @@ struct PermissionRow: View {
                     .foregroundStyle(theme.fgTertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if didRequest, !status.isGranted {
+                if wasAsked, !status.isGranted {
                     // Colour is never the sole carrier of meaning, and it also
                     // shouldn't be the loudest thing on screen. A small dot
                     // marks this as a caution; the words do the work.
@@ -74,7 +83,7 @@ struct PermissionRow: View {
                     }
                     .buttonStyle(GatewayButtonStyle(variant: .primary, size: .sm))
 
-                    if didRequest {
+                    if wasAsked {
                         Button("Open Settings") {
                             permissions.openSettings(permissions.pane(for: kind))
                         }
@@ -84,5 +93,6 @@ struct PermissionRow: View {
             }
         }
         .frame(minHeight: Layout.tapTarget)
+        .task { permissions.refresh() }
     }
 }

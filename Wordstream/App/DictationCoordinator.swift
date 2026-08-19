@@ -102,18 +102,55 @@ final class DictationCoordinator {
 
     var isMonitoring: Bool { hotkeys.isRunning }
 
+    /// Drops the in-memory reference to the most recent dictation.
+    ///
+    /// Reset calls this before it empties the store: a `Transcript` deleted from
+    /// its context is a live handle to an object that no longer exists, and the
+    /// menu bar reads this property every time it opens.
+    func forgetLastTranscript() {
+        lastTranscript = nil
+    }
+
     /// Loads the model the user already chose.
     ///
-    /// Deliberately does nothing when none has been chosen. It used to fall back
-    /// to the per-device recommendation and download it, which meant first launch
-    /// started a several-hundred-megabyte transfer during the welcome screen —
-    /// before the user had been told a download was coming, and racing the model
-    /// step they were about to be shown. Onboarding now starts that download
-    /// explicitly, from the row the user presses.
+    /// Deliberately does nothing when none has been chosen — on first run that
+    /// is `prefetchRecommendedModel()`'s job, and it is called from
+    /// onboarding rather than from here.
     func prepareModel() async {
         await engine.refreshCatalogue()
         let variant = prefs.modelVariant
         guard !variant.isEmpty else { return }
+        await engine.prepare(variant: variant)
+    }
+
+    /// Starts onboarding's model download before the user has chosen anything.
+    ///
+    /// The download is the long pole of first run — several hundred megabytes
+    /// against a permissions step that takes under a minute — and waiting for a
+    /// choice meant the transfer began only after the user had done everything
+    /// else, leaving them watching a progress bar with nothing left to do. Run
+    /// from the moment the welcome screen appears it overlaps the permission
+    /// grants instead, and is usually finished by the time they reach step 2.
+    ///
+    /// A variant already in preferences wins over the recommendation: this also
+    /// runs when onboarding is re-entered after a quit mid-download, and picking
+    /// the recommendation there would abandon a partial download for the model
+    /// the user actually asked for.
+    ///
+    /// Onboarding's welcome copy says the download has started; starting a
+    /// transfer this size silently would be the wrong trade.
+    func prefetchRecommendedModel() async {
+        await engine.refreshCatalogue()
+
+        let chosen = prefs.modelVariant
+        guard let variant = chosen.isEmpty ? engine.recommendedCuratedVariant : chosen else { return }
+
+        // Never override a download the user started themselves in the meantime —
+        // the catalogue fetch above is a network round trip, and they may well
+        // have pressed a row while it was in flight.
+        guard !engine.isPreparing, !engine.state.isReady else { return }
+
+        prefs.modelVariant = variant
         await engine.prepare(variant: variant)
     }
 
