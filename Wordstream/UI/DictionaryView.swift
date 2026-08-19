@@ -94,7 +94,7 @@ struct DictionaryView: View {
                         .frame(minHeight: Layout.tapTarget)
 
                         if entry.id != entries.last?.id {
-                            Divider().overlay(theme.borderSubtle)
+                            SettingDivider()
                         }
                     }
                 }

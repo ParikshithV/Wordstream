@@ -53,14 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator.startMonitoring()
         }
 
-        // Only for a returning user. On first run the model is chosen and
-        // downloaded from the onboarding window, so kicking one off here would
-        // race it.
+        // On first run the model is chosen and downloaded from the onboarding
+        // window, so kicking one off here would race it.
         if Preferences.shared.hasCompletedOnboarding {
             Task { await coordinator.prepareModel() }
-        }
-
-        if !Preferences.shared.hasCompletedOnboarding {
+        } else {
             showOnboarding(coordinator: coordinator)
         }
     }

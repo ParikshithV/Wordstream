@@ -4,7 +4,6 @@
 //
 
 import Foundation
-import os
 
 #if canImport(MLXLLM)
 import MLXLLM
@@ -39,8 +38,6 @@ import Tokenizers
 /// dependency absent, this tier simply reports itself unavailable and the
 /// pipeline falls through to the next one.
 final class MLXEnhancer: TextEnhancer {
-    private let log = Logger(subsystem: "app.wordstream", category: "mlx")
-
     /// Where the model cache lives, so Settings can show its size and offer to
     /// remove it.
     static var cacheDirectory: URL {
@@ -53,7 +50,7 @@ final class MLXEnhancer: TextEnhancer {
     /// Curated shortlist. All instruct-tuned and 4-bit, since the task is
     /// rewriting rather than reasoning.
     static let availableModels: [(id: String, name: String, size: String)] = [
-        ("mlx-community/gemma-3-1b-it-qat-4bit", "Gemma 3 1B (QAT)", "~0.7 GB"),
+        (defaultModelID, "Gemma 3 1B (QAT)", "~0.7 GB"),
         ("mlx-community/Qwen2.5-1.5B-Instruct-4bit", "Qwen 2.5 1.5B", "~0.9 GB"),
         ("mlx-community/Llama-3.2-3B-Instruct-4bit", "Llama 3.2 3B", "~1.8 GB"),
     ]
@@ -112,8 +109,8 @@ final class MLXEnhancer: TextEnhancer {
             container,
             instructions: EnhancementPrompt.instructions(for: context)
         )
-        let response = try await session.respond(to: text)
-        return Self.stripPreamble(response)
+        let response = try await session.respond(to: EnhancementPrompt.userTurn(for: text, context: context))
+        return EnhancementPrompt.stripDecoration(response)
     }
 
     /// Downloads the weights, reporting progress so Settings isn't a dead spinner
@@ -146,35 +143,5 @@ final class MLXEnhancer: TextEnhancer {
         let folder = modelID.replacingOccurrences(of: "/", with: "--")
         let path = Self.cacheDirectory.appending(path: "models--\(folder)")
         return FileManager.default.fileExists(atPath: path.path)
-    }
-
-    /// Small local models like to open with "Sure, here's the cleaned text:".
-    /// Foundation Models solves this with a guided schema; MLX has no equivalent,
-    /// so the preamble is stripped here instead.
-    private static func stripPreamble(_ response: String) -> String {
-        var text = response.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let markers = [
-            "here's the cleaned text:", "here is the cleaned text:",
-            "cleaned text:", "cleaned-up text:", "output:", "result:",
-        ]
-        let lowered = text.lowercased()
-        for marker in markers where lowered.hasPrefix(marker) {
-            text = String(text.dropFirst(marker.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            break
-        }
-
-        // Some models fence the answer even when nothing asked them to.
-        if text.hasPrefix("```") {
-            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            let inner = lines.dropFirst().prefix { !$0.hasPrefix("```") }
-            text = inner.joined(separator: "\n")
-        }
-
-        if text.count > 1, text.hasPrefix("\""), text.hasSuffix("\"") {
-            text = String(text.dropFirst().dropLast())
-        }
-
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

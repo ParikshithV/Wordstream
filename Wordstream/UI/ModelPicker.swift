@@ -90,18 +90,18 @@ struct ModelPicker: View {
             if showsAll {
                 ForEach(Array(families.enumerated()), id: \.element.id) { index, family in
                     if index > 0 {
-                        Divider().overlay(theme.borderSubtle)
+                        SettingDivider()
                     }
                     section(for: family)
                 }
                 if let legacyRow {
-                    Divider().overlay(theme.borderSubtle)
+                    SettingDivider()
                     row(for: legacyRow)
                 }
             } else {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, model in
                     if index > 0 {
-                        Divider().overlay(theme.borderSubtle)
+                        SettingDivider()
                     }
                     row(for: model)
                 }

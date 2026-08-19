@@ -270,7 +270,6 @@ final class WhisperEngine {
 
     struct TranscriptionOutput {
         let text: String
-        let language: String
     }
 
     /// The authoritative pass, over the complete recording.
@@ -307,10 +306,7 @@ final class WhisperEngine {
 
         let results = try await kit.transcribe(audioArray: samples, decodeOptions: options)
         let text = results.map(\.text).joined(separator: " ")
-        return TranscriptionOutput(
-            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-            language: results.first?.language ?? language
-        )
+        return TranscriptionOutput(text: text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Turns dictionary bias terms into decoder conditioning.

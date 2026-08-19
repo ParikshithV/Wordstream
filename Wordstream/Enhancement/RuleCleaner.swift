@@ -19,12 +19,22 @@ struct RuleCleaner {
     /// filler often enough to be tempting, and load-bearing often enough that
     /// stripping them changes meaning — "it works like this", "so the total is
     /// twelve". The LLM tiers can make that call in context; a regex cannot.
-    private static let fillers: Set<String> = [
+    ///
+    /// An array rather than a `Set` because these are joined into a regex
+    /// alternation, and `Set` iteration order is not stable between runs. The
+    /// `\b` anchors make the result correct either way, but a pattern that is
+    /// spelled differently on each launch is not something to leave to
+    /// backtracking.
+    private static let fillers = [
         "um", "uh", "erm", "uhh", "umm", "hmm", "mmm", "mhm", "ah", "eh",
     ]
 
-    /// Spoken punctuation, longest phrases first so "question mark" is matched
-    /// before "mark" could be.
+    /// Spoken punctuation, applied in listed order.
+    ///
+    /// Multi-word phrases come first so that a shorter entry added later —
+    /// "mark", "point", "line" — cannot consume part of a longer one before it
+    /// has had its turn. No current pair actually overlaps; the ordering is a
+    /// standing guard for the next entry rather than a fix for a live collision.
     private static let punctuation: [(phrase: String, replacement: String, attaches: Bool)] = [
         ("new paragraph", "\n\n", false),
         ("new line", "\n", false),

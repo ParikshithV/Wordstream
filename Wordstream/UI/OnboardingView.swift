@@ -111,7 +111,7 @@ struct OnboardingView: View {
                         detail: "To hear you.",
                         permissions: coordinator.permissions
                     )
-                    Divider().overlay(theme.borderSubtle)
+                    SettingDivider()
                     PermissionRow(
                         kind: .accessibility,
                         title: "Accessibility",
@@ -119,7 +119,7 @@ struct OnboardingView: View {
                         permissions: coordinator.permissions,
                         onChange: { coordinator.restartMonitoring() }
                     )
-                    Divider().overlay(theme.borderSubtle)
+                    SettingDivider()
                     PermissionRow(
                         kind: .inputMonitoring,
                         title: "Input Monitoring",

@@ -38,10 +38,12 @@ final class CloudEnhancer: TextEnhancer {
     init(provider: Provider = .anthropic) {
         self.provider = provider
         let config = URLSessionConfiguration.ephemeral
-        // Bounded well under the pipeline's own timeout so a slow network
-        // surfaces as a fallback rather than a hang.
+        // Bounded under the pipeline's cloud ceiling so a slow network surfaces
+        // here — as an error the pipeline can log and fall back from — rather
+        // than being cut off by the outer race with nothing to report. These
+        // used to sit *above* that ceiling, which made them unreachable.
         config.timeoutIntervalForRequest = 8
-        config.timeoutIntervalForResource = 12
+        config.timeoutIntervalForResource = 9
         self.session = URLSession(configuration: config)
     }
 
@@ -76,7 +78,7 @@ final class CloudEnhancer: TextEnhancer {
         "properties": [
             "text": [
                 "type": "string",
-                "description": "The cleaned dictation and nothing else.",
+                "description": "The resulting text and nothing else.",
             ],
         ],
         "required": ["text"],
@@ -96,7 +98,7 @@ final class CloudEnhancer: TextEnhancer {
             "model": "claude-opus-5",
             "max_tokens": 2048,
             "system": EnhancementPrompt.instructions(for: context),
-            "messages": [["role": "user", "content": text]],
+            "messages": [["role": "user", "content": EnhancementPrompt.userTurn(for: text, context: context)]],
             "output_config": [
                 // Cleanup is a narrow, formulaic task; deep reasoning would only
                 // buy latency on a path the user is waiting behind.
@@ -147,7 +149,7 @@ final class CloudEnhancer: TextEnhancer {
             "model": "gpt-4o-mini",
             "messages": [
                 ["role": "system", "content": EnhancementPrompt.instructions(for: context)],
-                ["role": "user", "content": text],
+                ["role": "user", "content": EnhancementPrompt.userTurn(for: text, context: context)],
             ],
             "response_format": [
                 "type": "json_schema",
