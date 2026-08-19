@@ -134,10 +134,12 @@ struct MenuBarContentView: View {
         switch coordinator.engine.state {
         case .idle:
             "No model loaded"
-        case let .downloading(progress):
+        case let .downloading(progress) where progress > 0:
             "Downloading model — \(Int(progress * 100))%"
+        case .downloading:
+            "Starting model download\u{2026}"
         case .loading:
-            "Loading model\u{2026}"
+            "Getting model ready\u{2026}"
         case .failed:
             "Model failed to load"
         case .ready:

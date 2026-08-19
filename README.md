@@ -111,6 +111,7 @@ there is nothing hidden behind it.
 | Custom dictionary | Map what you say to what should be written. Names, product spellings, internal jargon. |
 | App awareness | The cleanup prompt shifts by target app: terse and literal in a terminal, complete sentences in a mail composer. |
 | History | Every dictation kept locally in SwiftData, searchable, copyable, deletable. |
+| Reset | Put the app back to first run — settings, history, dictionary, API keys and downloaded model weights, or any subset. It quits when it finishes; the three system permissions are yours to revoke in System Settings. |
 | Appearance | Six palettes and a light/dark switch. |
 
 ## Privacy
@@ -198,39 +199,27 @@ Wordstream/
 ├── Models/           Preferences and the SwiftData Transcript model
 ├── Permissions/      The three-permission checker
 ├── DesignSystem/     Tokens, typography, components, motif
-└── Support/          Keychain wrapper
-
-Wordstream-website/   Astro marketing site (see its own README)
+├── Resources/        Bundled fonts
+└── Support/          Keychain wrapper and the reset routine
 ```
 
 ### Design system
 
-The website is a port of the app's design system, not a separate look. The two are
-meant to stay in step — if you change a token, a type style or the motif geometry
-in one, change it in the other.
+Everything visual comes from one place, and views are not allowed to reach past
+it.
 
-| App | Website |
+| File | What lives there |
 | --- | --- |
-| `Wordstream/DesignSystem/Tokens.swift` | `Wordstream-website/src/styles/tokens.css` |
-| `Wordstream/DesignSystem/Typography.swift` | `Wordstream-website/src/styles/global.css` |
-| `Wordstream/DesignSystem/Components.swift` | `Wordstream-website/src/styles/components.css` |
-| `Wordstream/DesignSystem/Motif.swift` | `Wordstream-website/src/lib/motif.ts` |
+| `Wordstream/DesignSystem/Tokens.swift` | Colour, spacing, radius and elevation tokens |
+| `Wordstream/DesignSystem/Typography.swift` | The type scale and the bundled faces |
+| `Wordstream/DesignSystem/Components.swift` | Shared controls built on the two above |
+| `Wordstream/DesignSystem/Motif.swift` | The mark's geometry |
 
-Colour has three layers — palette (`--palette-*`), primitive (`--n-*`,
-`--status-*`) and semantic (`--bg-*`, `--fg-*`, `--border-*`). Components may only
-touch the semantic layer; Swift enforces that with `private`, and on the web it is
-a convention. Both the palette switch and the dark theme are a swap of the
-semantic layer and nothing else.
-
-### Website
-
-```bash
-cd Wordstream-website
-npm install
-npm run dev
-```
-
-`npm run build` emits static HTML to `dist/`. Requires Node 22.12 or later.
+Colour has three layers — palette, primitive and semantic. Views may only touch
+the semantic layer, and `private` on the layers beneath it is what enforces that
+rather than a convention anyone has to remember. Both the palette switch and the
+dark theme are a swap of the semantic layer and nothing else, which is why neither
+one requires touching a view.
 
 ## Contributing
 
@@ -241,8 +230,8 @@ Issues and pull requests are welcome at
   read a neighbouring file before adding a new one.
 - Keep the app's privacy rule intact: audio never leaves the Mac, and nothing goes
   over the network unless the user deliberately turned that tier on.
-- Design-system changes belong in both the app and the website (see the table
-  above).
+- Colour, type and spacing changes belong in `DesignSystem/`, not in the view
+  that needed them.
 - If a change affects what the app sends, receives, or asks permission for, say so
   in the pull request description.
 

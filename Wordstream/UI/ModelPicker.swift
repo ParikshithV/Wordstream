@@ -33,10 +33,19 @@ struct ModelPicker: View {
     /// a decision they postpone, and postponing this one leaves the app unable to
     /// transcribe at all.
     var allowsAdvanced: Bool = true
-    /// Called after a model finishes loading, so onboarding can advance itself.
-    var onReady: (() -> Void)?
+    /// On during onboarding. By the time this screen is reached the recommended
+    /// model is already downloading, so the list of five is a menu of decisions
+    /// nobody has to make — it invites comparison shopping in the one place where
+    /// the right answer is already on its way. Collapsed, the step shows the model
+    /// being fetched and how far along it is, with the rest one press away for
+    /// anyone who does want to differ.
+    var collapsesToRecommendation: Bool = false
 
     @State private var prefs = Preferences.shared
+    /// Set by the "Choose a different model" link. Deliberately view state rather
+    /// than a preference: expanding it once during onboarding says nothing about
+    /// how the picker should open the next time it's seen.
+    @State private var showsAlternatives = false
 
     private var engine: WhisperEngine { coordinator.engine }
 
@@ -75,6 +84,20 @@ struct ModelPicker: View {
         ModelCatalogue.recommended(for: engine.recommendedModel, among: offered)
     }
 
+    /// Whether the list is standing in for itself with a single row.
+    private var isCollapsed: Bool { collapsesToRecommendation && !showsAlternatives }
+
+    /// The one row the collapsed list shows: whatever model is actually being
+    /// prepared or used, and only failing that the recommendation. Reading the
+    /// engine first matters — if someone expanded the list, chose `Exacting` and
+    /// collapsed it again, the row has to follow the choice rather than snap back
+    /// to a recommendation that is no longer what's downloading.
+    private var focused: SpeechModel? {
+        let current = engine.preparingVariant ?? engine.loadedVariant ?? prefs.modelVariant
+        if let match = rows.first(where: { $0.variant == current }) { return match }
+        return recommended ?? rows.first
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Space.x2) {
             if engine.availableModels.isEmpty {
@@ -87,7 +110,12 @@ struct ModelPicker: View {
                 .padding(.bottom, Space.x2)
             }
 
-            if showsAll {
+            if isCollapsed {
+                if let focused {
+                    row(for: focused)
+                }
+                alternativesToggle
+            } else if showsAll {
                 ForEach(Array(families.enumerated()), id: \.element.id) { index, family in
                     if index > 0 {
                         SettingDivider()
@@ -107,7 +135,11 @@ struct ModelPicker: View {
                 }
             }
 
-            if allowsAdvanced {
+            if collapsesToRecommendation, showsAlternatives {
+                alternativesToggle
+            }
+
+            if allowsAdvanced, !isCollapsed {
                 advancedToggle
             }
 
@@ -123,6 +155,26 @@ struct ModelPicker: View {
             }
         }
         .task { await engine.refreshCatalogue() }
+    }
+
+    // MARK: Collapsed mode
+
+    /// The way out of the single-row list, and the way back into it.
+    ///
+    /// Phrased as a difference from what's already happening rather than as
+    /// "Show all models": the point of the collapsed list is that a choice has
+    /// been made on the user's behalf, and the honest label for the escape hatch
+    /// names that rather than pretending the list was merely hidden. Going back is
+    /// only "Show fewer" — by then a different model may be the one downloading,
+    /// and "Keep the recommended model" would describe an action this button does
+    /// not take.
+    private var alternativesToggle: some View {
+        Button(showsAlternatives ? "Show fewer" : "Choose a different model") {
+            showsAlternatives.toggle()
+        }
+        .buttonStyle(GatewayButtonStyle(variant: .ghost, size: .sm))
+        .padding(.horizontal, -Space.x3)  // Optically aligned with the row above.
+        .padding(.top, Space.x1)
     }
 
     // MARK: Advanced mode
@@ -143,7 +195,12 @@ struct ModelPicker: View {
             .buttonStyle(GatewayButtonStyle(variant: .ghost, size: .sm))
             .padding(.horizontal, -Space.x3)  // Optically aligned with the rows.
 
-            if showsAll {
+            if isCollapsed {
+                if let focused {
+                    row(for: focused)
+                }
+                alternativesToggle
+            } else if showsAll {
                 Text("Everything WhisperKit lists for this Mac, unfiltered — some builds are English-only, some are far slower for little gain.")
                     .typeStyle(Typography.caption)
                     .foregroundStyle(theme.fgTertiary)
@@ -393,11 +450,6 @@ struct ModelPicker: View {
         // user asked for, and a quit mid-download should resume it next launch
         // rather than silently reverting.
         prefs.modelVariant = model.variant
-        Task {
-            await engine.prepare(variant: model.variant)
-            if engine.loadedVariant == model.variant, engine.state.isReady {
-                onReady?()
-            }
-        }
+        Task { await engine.prepare(variant: model.variant) }
     }
 }

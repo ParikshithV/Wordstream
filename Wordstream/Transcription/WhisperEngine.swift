@@ -61,13 +61,21 @@ final class WhisperEngine {
 
     /// Where Whisper models live on disk.
     ///
-    /// This must be passed explicitly. WhisperKit's `downloadBase` defaults to
-    /// `~/Documents/huggingface`, and on macOS 14+ the first write there makes the
-    /// system throw up a "Wordstream would like to access files in your Documents
-    /// folder" prompt in the middle of onboarding — an alarming ask from a
+    /// This must be passed to *every* WhisperKit entry point that takes a
+    /// `downloadBase`, not just the download itself. The parameter is optional
+    /// everywhere and defaults to `~/Documents/huggingface`, so any call that
+    /// omits it writes there — and on macOS 14+ the first write makes the system
+    /// throw up a "Wordstream would like to access files in your Documents
+    /// folder" prompt in the middle of onboarding: an alarming ask from a
     /// dictation app, unexplained, and one a refusal leaves permanently broken.
-    /// Application Support is the correct location for app-managed data anyway and
-    /// carries no TCC gate, so the prompt simply never happens.
+    ///
+    /// The catalogue fetch is the easy one to miss, because it downloads a few
+    /// kilobytes of `config.json` rather than a model and so doesn't look like a
+    /// download at all. It was enough to create `~/Documents/huggingface` and
+    /// trigger the prompt on the welcome screen.
+    ///
+    /// Application Support is the correct location for app-managed data anyway
+    /// and carries no TCC gate, so the prompt simply never happens.
     static let modelStorage: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL.homeDirectory.appending(path: "Library/Application Support", directoryHint: .isDirectory)
@@ -80,11 +88,23 @@ final class WhisperEngine {
 
     func refreshCatalogue() async {
         refreshDownloadedVariants()
-        let support = await WhisperKit.recommendedRemoteModels()
+        let support = await WhisperKit.recommendedRemoteModels(downloadBase: Self.modelStorage)
         recommendedModel = support.default
         availableModels = support.supported.filter { !support.disabled.contains($0) }
         if availableModels.isEmpty { availableModels = [support.default] }
         log.info("Catalogue: \(self.availableModels.count) models, recommended \(support.default, privacy: .public)")
+    }
+
+    /// The curated model this Mac should get, or nil until the catalogue is known.
+    ///
+    /// Mapped through `ModelCatalogue` rather than used raw, so the variant that
+    /// downloads by itself is the same row the picker badges "Best for this Mac".
+    /// Argmax's own recommendation is one input to that judgement, not the answer.
+    var recommendedCuratedVariant: String? {
+        ModelCatalogue.recommended(
+            for: recommendedModel,
+            among: ModelCatalogue.offered(supportedBy: availableModels)
+        )?.variant
     }
 
     // MARK: Load
@@ -132,7 +152,12 @@ final class WhisperEngine {
             if preparingVariant == variant { preparingVariant = nil }
         }
 
-        state = .downloading(0)
+        // A variant already on disk goes straight to loading: the download call
+        // below returns immediately for it, so announcing a download would be a
+        // claim the user can see is false — the wait they're watching is the
+        // load, not a transfer.
+        refreshDownloadedVariants()
+        state = isDownloaded(variant) ? .loading : .downloading(0)
         loadedVariant = nil
         kit = nil
 
@@ -148,6 +173,9 @@ final class WhisperEngine {
             ) { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self, self.preparingVariant == variant else { return }
+                    // Guarded so a stray callback for an on-disk model can't push
+                    // the UI back from "loading" to "downloading".
+                    guard case .downloading = self.state else { return }
                     self.state = .downloading(progress.fractionCompleted)
                 }
             }
@@ -190,12 +218,17 @@ final class WhisperEngine {
 
     // MARK: On-disk models
 
+    /// Where the Hub client puts this repo's variants under `modelStorage`.
+    private static var repoFolder: URL {
+        modelStorage.appending(
+            path: "models/argmaxinc/whisperkit-coreml", directoryHint: .isDirectory
+        )
+    }
+
     /// Where a variant lands under `modelStorage`, mirroring the Hub client's
     /// `downloadBase/models/<repo>/<variant>` layout.
     private static func folder(for variant: String) -> URL {
-        modelStorage
-            .appending(path: "models/argmaxinc/whisperkit-coreml", directoryHint: .isDirectory)
-            .appending(path: variant, directoryHint: .isDirectory)
+        repoFolder.appending(path: variant, directoryHint: .isDirectory)
     }
 
     func isDownloaded(_ variant: String) -> Bool {
@@ -206,11 +239,8 @@ final class WhisperEngine {
     /// so variants chosen before the catalogue was narrowed still report honestly
     /// as being on disk instead of appearing to have vanished.
     func refreshDownloadedVariants() {
-        let repo = Self.modelStorage.appending(
-            path: "models/argmaxinc/whisperkit-coreml", directoryHint: .isDirectory
-        )
         let folders = (try? FileManager.default.contentsOfDirectory(
-            at: repo, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+            at: Self.repoFolder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
         )) ?? []
 
         downloadedVariants = Set(
@@ -230,6 +260,17 @@ final class WhisperEngine {
         try? FileManager.default.removeItem(at: Self.folder(for: variant))
         refreshDownloadedVariants()
         log.info("Deleted \(variant, privacy: .public)")
+    }
+
+    /// Removes every downloaded variant, not just the ones currently offered.
+    ///
+    /// Scoped to this app's own `modelStorage` folder, so it can safely take the
+    /// whole repo directory rather than walking it — nothing else writes there.
+    func deleteAllDownloads() async {
+        await unload()
+        try? FileManager.default.removeItem(at: Self.repoFolder)
+        refreshDownloadedVariants()
+        log.info("Deleted all downloaded speech models")
     }
 
     func unload() async {

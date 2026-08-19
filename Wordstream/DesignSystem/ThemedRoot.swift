@@ -64,7 +64,14 @@ struct GatewayRadioGroup<Value: Hashable>: View {
     var options: [(value: Value, label: String, detail: String?)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Spaced, not stacked flush. Each option is a label over a wrapping
+        // paragraph, so with no gap the last line of one option's detail sits
+        // closer to the *next* option's title than to the title it belongs to —
+        // the grouping reads inverted, and on the reset control that means the
+        // consequences of one choice appear to describe the other. The gap is
+        // three times the title-to-detail spacing, which is what makes each pair
+        // read as a pair.
+        VStack(alignment: .leading, spacing: Space.x3) {
             ForEach(options, id: \.value) { option in
                 Button {
                     selection = option.value
@@ -80,7 +87,7 @@ struct GatewayRadioGroup<Value: Hashable>: View {
                         }
                         .padding(.top, 2)
 
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: Space.x1) {
                             Text(option.label)
                                 .typeStyle(Typography.bodySm)
                                 .foregroundStyle(theme.fgPrimary)
@@ -94,7 +101,7 @@ struct GatewayRadioGroup<Value: Hashable>: View {
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(minHeight: Layout.tapTarget)
+                    .frame(minHeight: Layout.tapTarget, alignment: .top)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

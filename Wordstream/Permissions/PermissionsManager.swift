@@ -86,6 +86,18 @@ final class PermissionsManager {
     /// path in the UI therefore requests first and only offers the pane
     /// afterwards, for the case where the answer was already "no".
     func request(_ kind: Kind) async {
+        // Ask the system what it already knows before asking the user anything.
+        //
+        // A grant can arrive without this app being involved: a previous
+        // install, a switch flipped in System Settings while this window sat
+        // open, a management profile. Re-reading first means an
+        // already-granted permission never enters the request path at all —
+        // which for the microphone matters beyond tidiness, since that path
+        // flips the activation policy and steals focus to host a prompt macOS
+        // was never going to show.
+        refresh()
+        guard !status(kind).isGranted else { return }
+
         switch kind {
         case .microphone:
             logMicrophoneDiagnostics("before")
@@ -181,6 +193,22 @@ final class PermissionsManager {
         AVCaptureDevice=\(capture) AVAudioApplication=\(audioApp) \
         defaultDevice=\(hasDevice) usageString=\(usage)
         """)
+    }
+
+    /// Whether macOS has already put this question to the user — the
+    /// difference between "Allow" being able to do something and it being a
+    /// dead button, because the system prompts exactly once.
+    ///
+    /// `.denied` only carries that meaning for the two APIs that report
+    /// `.notDetermined` before the first request. Accessibility has no such
+    /// state: `AXIsProcessTrusted()` is a bool, and an app that has never asked
+    /// is indistinguishable from one that was refused. So it answers false and
+    /// the UI falls back to remembering its own request.
+    func hasBeenPrompted(_ kind: Kind) -> Bool {
+        switch kind {
+        case .microphone, .inputMonitoring: status(kind) == .denied
+        case .accessibility: false
+        }
     }
 
     func status(_ kind: Kind) -> Status {

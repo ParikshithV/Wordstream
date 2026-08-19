@@ -53,12 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator.startMonitoring()
         }
 
-        // On first run the model is chosen and downloaded from the onboarding
-        // window, so kicking one off here would race it.
         if Preferences.shared.hasCompletedOnboarding {
             Task { await coordinator.prepareModel() }
         } else {
             showOnboarding(coordinator: coordinator)
+            // Started here rather than from the model step, so the download runs
+            // while the user is still granting permissions instead of after.
+            // Both paths go through the same engine, so the picker shows this
+            // download's progress on its own row and switching models cancels it.
+            Task { await coordinator.prefetchRecommendedModel() }
         }
     }
 
