@@ -159,21 +159,100 @@ private struct GeneralSettings: View {
 
 // MARK: - Models
 
-/// A section header bound to the card it introduces.
+/// A section header bound to the card it introduces, and a disclosure for it.
 ///
 /// The tabs that predate this page space every header and card equally, which
 /// reads fine at two sections and stops reading as a hierarchy at four.
+///
+/// Closed by default, because this page is read far more often than it is
+/// changed. All three sections open at once is several screens of controls to
+/// scroll past to reach the one being looked for, and the settings someone came
+/// to check — which model is running, which clean-up will happen — were buried
+/// inside the controls for changing them. Closed, each section states its answer
+/// on one line and opens only when there is something to change.
+///
+/// `value` is what makes that trade honest: a section that has to be opened
+/// before it will say what it is set to has hidden information rather than
+/// tidied it, so a section with controls in it is expected to summarise them.
 private struct SettingsSection<Content: View>: View {
+    @Environment(\.theme) private var theme
     var eyebrow: String
     var title: String
     var subtitle: String?
+    /// What this section currently amounts to, in a few words — the model that is
+    /// running, the tier that will clean up. Shown while closed, where it is the
+    /// only thing standing in for the section's contents.
+    var value: String?
     @ViewBuilder var content: Content
+
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.x4) {
-            SectionHeader(eyebrow: eyebrow, title: title, subtitle: subtitle)
-            GatewayCard { content }
+            Button {
+                withAnimation(Motion.reduceMotion ? nil : Motion.standard()) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                header
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(title), \(eyebrow)")
+            .accessibilityValue(isExpanded ? "Expanded" : (value ?? "Collapsed"))
+            .accessibilityHint(isExpanded ? "Hides these settings" : "Shows these settings")
+
+            if isExpanded {
+                GatewayCard { content }
+                    .transition(.opacity)
+            }
         }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: Space.x4) {
+            // Rotated rather than swapped for a `chevron.up`, so the direction of
+            // travel is visible in the movement and not only in the end state.
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.fgTertiary)
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                .frame(width: 12, height: 12)
+                .padding(.top, 5)
+
+            VStack(alignment: .leading, spacing: Space.x2) {
+                Text(eyebrow)
+                    .typeStyle(Typography.label)
+                    .foregroundStyle(theme.fgTertiary)
+
+                Text(title)
+                    .typeStyle(Typography.headingSm)
+                    .foregroundStyle(theme.fgPrimary)
+
+                // Only once open. Closed, the subtitle explains a section whose
+                // controls aren't on screen, and `value` is the more useful line
+                // in the space it would take.
+                if let subtitle, isExpanded {
+                    Text(subtitle)
+                        .typeStyle(Typography.bodySm)
+                        .foregroundStyle(theme.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: Space.x2)
+
+            if let value, !isExpanded {
+                Text(value)
+                    .typeStyle(Typography.bodySm)
+                    .foregroundStyle(theme.fgSecondary)
+                    .multilineTextAlignment(.trailing)
+                    // Clears the eyebrow's line box plus the stack spacing, so the
+                    // value starts on the title's line rather than between the two.
+                    .padding(.top, Space.x4 + Space.x2)
+            }
+        }
+        .contentShape(Rectangle())
+        .frame(minHeight: Layout.tapTarget, alignment: .top)
     }
 }
 
@@ -230,7 +309,8 @@ private struct ModelsSettings: View {
         SettingsSection(
             eyebrow: "Step 1 · Speech",
             title: "What hears you",
-            subtitle: "Whisper runs on this Mac. Nothing you dictate is uploaded during transcription."
+            subtitle: "Whisper runs on this Mac. Nothing you dictate is uploaded during transcription.",
+            value: speechSummary
         ) {
             VStack(alignment: .leading, spacing: Space.x4) {
                 HStack {
@@ -270,6 +350,32 @@ private struct ModelsSettings: View {
         }
     }
 
+    /// Step 1 in a few words, for the closed header: which model, and whether it
+    /// is actually running. Both halves matter — a chosen model that failed to
+    /// load is the case where someone most needs to be told without opening
+    /// anything.
+    private var speechSummary: String {
+        let variant = coordinator.engine.loadedVariant ?? prefs.modelVariant
+        let name = variant.isEmpty ? nil : ModelCatalogue.describe(variant).name
+
+        return switch coordinator.engine.state {
+        case .idle: name.map { "\($0) · not loaded" } ?? "No model chosen"
+        case .downloading: "Downloading \(name ?? "a model")"
+        case .loading: "Loading \(name ?? "a model")"
+        case .ready: name ?? "Ready"
+        case .failed: "Needs attention"
+        }
+    }
+
+    /// Step 2 in a few words. Automatic names what it resolves to as well as
+    /// itself, because "Automatic" alone answers none of the question someone
+    /// opened this page to ask.
+    private var cleanupSummary: String {
+        let tier = prefs.enhancementTier
+        guard tier == .auto, !status.isEmpty else { return tier.displayName }
+        return "\(tier.displayName) · \(resolved.displayName)"
+    }
+
     @ViewBuilder
     private var speechBadge: some View {
         switch coordinator.engine.state {
@@ -287,7 +393,8 @@ private struct ModelsSettings: View {
         SettingsSection(
             eyebrow: "Step 2 · Cleanup",
             title: "What turns it into writing",
-            subtitle: "Punctuation and filler cleanup always run. A language model on top of that applies the corrections you speak and fixes the sentences rules can't."
+            subtitle: "Punctuation and filler cleanup always run. A language model on top of that applies the corrections you speak and fixes the sentences rules can't.",
+            value: cleanupSummary
         ) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(EnhancementTier.allCases.enumerated()), id: \.element) { index, tier in
@@ -498,7 +605,8 @@ private struct ModelsSettings: View {
         SettingsSection(
             eyebrow: "Style",
             title: "How much to change",
-            subtitle: nil
+            subtitle: nil,
+            value: prefs.enhancementStyle.displayName
         ) {
             VStack(alignment: .leading, spacing: Space.x3) {
                 GatewayRadioGroup(
