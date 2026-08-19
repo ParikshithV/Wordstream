@@ -18,6 +18,13 @@ import SwiftUI
 /// Mac supports behind Advanced mode. The default list is a recommendation; the
 /// advanced one is a catalogue, and conflating them would make the common case
 /// harder to serve the rare one.
+///
+/// The two are shaped differently on purpose. The curated list is five peers, so
+/// it is five equal rows. The catalogue is not a list of two dozen models — it is
+/// six or seven models in two dozen wrappers, and rendering it flat made every
+/// wrapper look like a model and left several rows literally indistinguishable
+/// from each other. So it is grouped: the model, then the builds of it, which is
+/// the order the decision is actually made in.
 struct ModelPicker: View {
     @Environment(\.theme) private var theme
     var coordinator: DictationCoordinator
@@ -37,22 +44,29 @@ struct ModelPicker: View {
         ModelCatalogue.offered(supportedBy: engine.availableModels)
     }
 
-    /// What the list shows: the curated five, or everything the device supports.
-    ///
-    /// Either way the user's current model gets a row even when it is in neither
-    /// list, so the model actually doing the transcribing is never missing from
-    /// the list of models.
+    /// What the list shows: the curated five, or every build the device supports,
+    /// grouped by the model each is a build of.
     private var showsAll: Bool { allowsAdvanced && prefs.showAllSpeechModels }
 
+    private var families: [ModelFamily] {
+        ModelCatalogue.families(supportedBy: engine.availableModels)
+    }
+
+    /// The curated list, plus the current model when it isn't one of them.
     private var rows: [SpeechModel] {
-        let base = showsAll
-            ? ModelCatalogue.allOffered(supportedBy: engine.availableModels)
-            : offered
+        offered + (legacyRow.map { [$0] } ?? [])
+    }
+
+    /// The model in use when whichever list is showing doesn't contain it, so the
+    /// model actually doing the transcribing is never missing from the list of
+    /// models.
+    private var legacyRow: SpeechModel? {
         let current = engine.loadedVariant ?? prefs.modelVariant
-        guard !current.isEmpty, !base.contains(where: { $0.variant == current }) else {
-            return base
-        }
-        return base + [ModelCatalogue.legacy(current)]
+        let listed = showsAll
+            ? families.contains { $0.variants.contains { $0.variant == current } }
+            : offered.contains { $0.variant == current }
+        guard !current.isEmpty, !listed else { return nil }
+        return ModelCatalogue.legacy(current)
     }
 
     /// Always computed over the curated five: the recommendation is a judgement
@@ -73,11 +87,24 @@ struct ModelPicker: View {
                 .padding(.bottom, Space.x2)
             }
 
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, model in
-                if index > 0 {
-                    Divider().overlay(theme.borderSubtle)
+            if showsAll {
+                ForEach(Array(families.enumerated()), id: \.element.id) { index, family in
+                    if index > 0 {
+                        Divider().overlay(theme.borderSubtle)
+                    }
+                    section(for: family)
                 }
-                row(for: model)
+                if let legacyRow {
+                    Divider().overlay(theme.borderSubtle)
+                    row(for: legacyRow)
+                }
+            } else {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, model in
+                    if index > 0 {
+                        Divider().overlay(theme.borderSubtle)
+                    }
+                    row(for: model)
+                }
             }
 
             if allowsAdvanced {
@@ -124,6 +151,113 @@ struct ModelPicker: View {
             }
         }
         .padding(.top, Space.x1)
+    }
+
+    // MARK: Family
+
+    /// One Whisper model and the builds of it, as a headed group.
+    ///
+    /// The model gets the name and the one line that decides whether to look
+    /// inside at all — including, for Medium and Large v2, that the answer is no.
+    /// The builds under it are deliberately quieter: they are the same model, and
+    /// what varies between them is packaging, so each says only what makes it
+    /// different from its siblings rather than restating what they all are.
+    @ViewBuilder
+    private func section(for family: ModelFamily) -> some View {
+        VStack(alignment: .leading, spacing: Space.x3) {
+            VStack(alignment: .leading, spacing: Space.x1) {
+                Text(family.name)
+                    .typeStyle(Typography.bodySmMedium)
+                    .foregroundStyle(theme.fgPrimary)
+
+                Text(family.summary)
+                    .typeStyle(Typography.caption)
+                    .foregroundStyle(theme.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: Space.x3) {
+                ForEach(family.variants) { variant in
+                    build(variant)
+                }
+            }
+            // Indented so the builds read as belonging to the model above them
+            // rather than as more models, which is the whole distinction the flat
+            // list lost.
+            .padding(.leading, Space.x3)
+        }
+        .padding(.vertical, Space.x3)
+    }
+
+    /// One build within a family: what makes it different, how big it is, and
+    /// what it costs to load.
+    @ViewBuilder
+    private func build(_ model: SpeechModel) -> some View {
+        let isPreparing = engine.preparingVariant == model.variant
+        let isActive = engine.loadedVariant == model.variant && engine.state.isReady
+        let isRecommended = model.id == recommended?.id
+
+        VStack(alignment: .leading, spacing: Space.x2) {
+            HStack(alignment: .top, spacing: Space.x4) {
+                VStack(alignment: .leading, spacing: Space.x1) {
+                    HStack(spacing: Space.x2) {
+                        Text(model.qualifier.isEmpty ? "Standard build" : model.qualifier)
+                            .typeStyle(Typography.bodySm)
+                            .foregroundStyle(theme.fgPrimary)
+
+                        // The friendly name, where one exists, so someone who came
+                        // here looking for `Sharp` can still see which row it is.
+                        if let curated = ModelCatalogue.curatedName(for: model.variant) {
+                            GatewayBadge(text: curated, tone: .neutral)
+                        }
+
+                        if isActive {
+                            GatewayBadge(text: "In use", tone: .success)
+                        } else if isRecommended {
+                            GatewayBadge(text: "Best for this Mac", tone: .brand)
+                        }
+                    }
+
+                    if !sizeLine(for: model).isEmpty {
+                        Text(sizeLine(for: model))
+                            .typeStyle(Typography.caption)
+                            .foregroundStyle(theme.fgTertiary)
+                    }
+
+                    // The cost the download size gives no hint of, and the one
+                    // most likely to be regretted from this list.
+                    if let warning = ModelCatalogue.loadWarning(for: model) {
+                        Text(warning)
+                            .typeStyle(Typography.caption)
+                            .foregroundStyle(theme.fgWarning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    // The build identifier, shown here and only here — this is the
+                    // list where the identifier is the thing being chosen.
+                    Text(model.variant)
+                        .typeStyle(Typography.mono13)
+                        .foregroundStyle(theme.fgTertiary)
+                        .textSelection(.enabled)
+                }
+
+                Spacer(minLength: Space.x2)
+
+                action(for: model, isPreparing: isPreparing, isActive: isActive)
+                    .fixedSize()
+            }
+
+            if isPreparing {
+                progress
+            }
+        }
+        .contextMenu {
+            if engine.isDownloaded(model.variant), !isPreparing {
+                Button("Remove download", role: .destructive) {
+                    Task { await engine.delete(model.variant) }
+                }
+            }
+        }
     }
 
     // MARK: Row
@@ -174,15 +308,6 @@ struct ModelPicker: View {
                         Text(sizeLine(for: model))
                             .typeStyle(Typography.caption)
                             .foregroundStyle(theme.fgTertiary)
-                    }
-
-                    // The build identifier, shown only where it is the thing being
-                    // chosen. In the curated list it is an implementation detail.
-                    if showsAll {
-                        Text(model.variant)
-                            .typeStyle(Typography.mono13)
-                            .foregroundStyle(theme.fgTertiary)
-                            .textSelection(.enabled)
                     }
                 }
 

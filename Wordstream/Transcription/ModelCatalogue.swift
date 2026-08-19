@@ -32,6 +32,17 @@ struct SpeechModel: Identifiable, Hashable, Sendable {
     /// separate and visible; this is the wait after it, every cold launch, while
     /// the weights compile onto the Neural Engine. Ranking input, not a promise.
     let loadSeconds: Double
+    /// Which Whisper model this is a build of — the grouping key for Advanced
+    /// mode. Builds within a family differ in packaging, never in what the model
+    /// knows.
+    let family: String
+    /// What sets this build apart from its siblings in the same family:
+    /// "Compressed", "Turbo build · full precision". Inside a family this — not
+    /// the name, which every sibling shares — is the thing being chosen between.
+    /// Deliberately carries no size: `sizeText` states that once, on its own
+    /// line, and two families' worth of "Compressed · 626 MB · 626 MB" is how
+    /// this list got unreadable in the first place.
+    let qualifier: String
 
     var id: String { variant }
 
@@ -39,7 +50,7 @@ struct SpeechModel: Identifiable, Hashable, Sendable {
     /// inventing a number would be worse than saying nothing.
     var sizeText: String {
         guard bytes > 0 else { return "" }
-        return bytes.formatted(.byteCount(style: .file, allowedUnits: .mb, spellsOutZero: false))
+        return bytes.formatted(.byteCount(style: .file, allowedUnits: [.mb, .gb], spellsOutZero: false))
     }
 
     /// Approximate resident memory once loaded.
@@ -50,8 +61,30 @@ struct SpeechModel: Identifiable, Hashable, Sendable {
     var workingMemory: Int64 { Int64(Double(bytes) * 2.7) }
 }
 
+/// A Whisper model and the builds of it this Mac can run.
+///
+/// WhisperKit's catalogue is a flat list of two dozen identifiers in which the
+/// same handful of models appear over and over: `large-v3`, `large-v3_947MB`,
+/// `large-v3_turbo` and `large-v3_turbo_954MB` are one model in four wrappers.
+/// Listed flat that reads as two dozen decisions when there are really six, and
+/// the wrappers — which change load time and memory but not what the model
+/// knows — sit at the same visual weight as the models themselves. Grouping puts
+/// the decision back in its actual shape: choose the model, then choose how it is
+/// packaged.
+struct ModelFamily: Identifiable, Hashable, Sendable {
+    let id: String
+    /// How the model is known outside this app — "Whisper Large v3 Turbo".
+    let name: String
+    /// Whether this family is worth choosing at all, in one line. Several are
+    /// not, and saying so is the whole point of showing the full catalogue with
+    /// commentary rather than as a directory listing.
+    let summary: String
+    /// Builds of this model, lightest first.
+    let variants: [SpeechModel]
+}
+
 /// The five models Wordstream offers, smallest first — plus the machinery to
-/// describe any of the twenty-odd others for Advanced mode.
+/// describe and group any of the twenty-odd others for Advanced mode.
 ///
 /// Deliberately five out of the twenty-plus WhisperKit supports. The excluded
 /// ones are `.en`-only duplicates, superseded `large-v2` builds, and distil
@@ -67,7 +100,9 @@ enum ModelCatalogue {
             technicalName: "Whisper Tiny",
             summary: "Types almost as fast as you speak. Fumbles names, jargon and anything mumbled.",
             bytes: 78_000_000,
-            loadSeconds: 2
+            loadSeconds: 2,
+            family: "tiny",
+            qualifier: "Full precision"
         ),
         SpeechModel(
             variant: "openai_whisper-base",
@@ -75,7 +110,9 @@ enum ModelCatalogue {
             technicalName: "Whisper Base",
             summary: "Still very fast, noticeably steadier on ordinary sentences.",
             bytes: 148_000_000,
-            loadSeconds: 3
+            loadSeconds: 3,
+            family: "base",
+            qualifier: "Full precision"
         ),
         SpeechModel(
             variant: "openai_whisper-small",
@@ -83,7 +120,9 @@ enum ModelCatalogue {
             technicalName: "Whisper Small",
             summary: "Handles accents and background noise well. The safe choice on an older Mac.",
             bytes: 483_000_000,
-            loadSeconds: 8
+            loadSeconds: 8,
+            family: "small",
+            qualifier: "Full precision"
         ),
         SpeechModel(
             variant: "openai_whisper-large-v3-v20240930_626MB",
@@ -91,7 +130,9 @@ enum ModelCatalogue {
             technicalName: "Whisper Large v3 Turbo, compressed",
             summary: "Near-flagship accuracy, compressed to run comfortably on Apple silicon.",
             bytes: 626_000_000,
-            loadSeconds: 18
+            loadSeconds: 18,
+            family: "large-v3-turbo",
+            qualifier: "Compressed"
         ),
         SpeechModel(
             variant: "openai_whisper-large-v3_947MB",
@@ -99,7 +140,9 @@ enum ModelCatalogue {
             technicalName: "Whisper Large v3, compressed",
             summary: "The most accurate option. Slowest to load and the heaviest on memory.",
             bytes: 947_000_000,
-            loadSeconds: 30
+            loadSeconds: 30,
+            family: "large-v3",
+            qualifier: "Compressed"
         ),
     ]
 
@@ -116,24 +159,59 @@ enum ModelCatalogue {
         return runnable.isEmpty ? all : runnable
     }
 
-    /// Every variant WhisperKit lists for this Mac, described and ordered — the
-    /// Advanced-mode list.
+    /// Every variant WhisperKit lists for this Mac, grouped by the model it is a
+    /// build of and ordered lightest family first — the Advanced-mode list.
     ///
-    /// Curated models keep their friendly names here rather than reverting to
-    /// build identifiers, so turning Advanced mode on adds rows instead of
-    /// renaming the ones already on screen.
-    static func allOffered(supportedBy device: [String]) -> [SpeechModel] {
-        guard !device.isEmpty else { return all }
-        return device.map(describe).sorted { a, b in
-            let (fa, fb) = (familyRank(a.variant), familyRank(b.variant))
-            if fa != fb { return fa < fb }
-            if a.bytes != b.bytes { return a.bytes < b.bytes }
-            return a.variant < b.variant
-        }
+    /// Curated models keep their friendly names within their family rather than
+    /// reverting to build identifiers, so turning Advanced mode on adds builds
+    /// around the ones already on screen instead of renaming them.
+    static func families(supportedBy device: [String]) -> [ModelFamily] {
+        let variants = device.isEmpty ? all.map(\.variant) : device
+        let described = variants.map(describe)
+        let byFamily = Dictionary(grouping: described, by: \.family)
+
+        return byFamily
+            .map { id, members in
+                ModelFamily(
+                    id: id,
+                    name: familyName(id) ?? members.first?.technicalName ?? id,
+                    summary: familySummary(id) ?? "Not one of the models Wordstream knows about — WhisperKit added it after this list was written.",
+                    variants: members.sorted { ($0.bytes, $0.variant) < ($1.bytes, $1.variant) }
+                )
+            }
+            .sorted { familyRank($0.id) < familyRank($1.id) }
     }
 
     static func model(for variant: String) -> SpeechModel? {
         all.first { $0.variant == variant }
+    }
+
+    /// The friendly name for a variant, when it has one. Used to badge the
+    /// curated builds inside the Advanced list, so someone who arrived there
+    /// looking for `Sharp` can still see which row it is.
+    static func curatedName(for variant: String) -> String? {
+        model(for: variant)?.name
+    }
+
+    /// The wait worth warning about, in one line, or nil when there is nothing to
+    /// warn about.
+    ///
+    /// The full-precision large builds take upwards of a minute to compile onto
+    /// the Neural Engine, every cold launch — the single fact most likely to make
+    /// someone regret a choice from the Advanced list, and the one the download
+    /// size gives no hint of.
+    ///
+    /// Pitched well above `patienceSeconds` rather than at it. That threshold is
+    /// what a *recommendation* may impose, and warning on everything past it would
+    /// mark two thirds of the Advanced list — including builds no worse than the
+    /// `Exacting` we offer unflagged in the curated list. A warning on most rows
+    /// distinguishes nothing, which is the failure mode this list already had.
+    static func loadWarning(for model: SpeechModel) -> String? {
+        guard model.loadSeconds > 35 else { return nil }
+        let wait = model.loadSeconds >= 90
+            ? "over a minute"
+            : "about \(Int(model.loadSeconds / 10) * 10) seconds"
+        return "Takes \(wait) to load on every cold launch, before the first dictation can start."
     }
 
     // MARK: Recommendation
@@ -242,6 +320,87 @@ enum ModelCatalogue {
         return match.bytes
     }
 
+    // MARK: Families
+
+    /// The Whisper models WhisperKit ships builds of, lightest first, each with
+    /// the line that decides whether to look inside it at all.
+    ///
+    /// Ordered rather than looked up by name so the Advanced list reads like the
+    /// curated one — a ladder from fastest to most accurate — instead of like a
+    /// directory listing. Anything WhisperKit adds later sorts to the end rather
+    /// than interleaving unpredictably.
+    private static let familyOrder: [(id: String, name: String, summary: String)] = [
+        ("tiny", "Whisper Tiny",
+         "The fastest thing here and the least accurate. Fine for short, clearly spoken notes."),
+        ("base", "Whisper Base",
+         "Twice Tiny's size, noticeably steadier. Still fast enough to keep up with speech."),
+        ("small", "Whisper Small",
+         "Where accents and background noise stop being a problem. The safe choice on an older Mac."),
+        ("medium", "Whisper Medium",
+         "Superseded: Large v3 Turbo is more accurate than this and loads faster. Little reason to pick it."),
+        ("large-v2", "Whisper Large v2",
+         "The previous flagship. Large v3 beats it at the same size — kept for anyone who tuned around v2."),
+        ("large-v3-turbo", "Whisper Large v3 Turbo",
+         "Large v3's accuracy with a much smaller decoder. The best accuracy-per-second on Apple silicon."),
+        ("large-v3", "Whisper Large v3",
+         "The most accurate Whisper there is, and the slowest to load and heaviest on memory."),
+        ("distil-large-v3", "Distil Whisper Large v3",
+         "A distilled copy of Large v3: faster, a little less accurate, and English only."),
+    ]
+
+    private static func familyName(_ id: String) -> String? {
+        familyOrder.first { $0.id == id }?.name
+    }
+
+    private static func familySummary(_ id: String) -> String? {
+        familyOrder.first { $0.id == id }?.summary
+    }
+
+    private static func familyRank(_ id: String) -> Int {
+        familyOrder.firstIndex { $0.id == id } ?? familyOrder.count
+    }
+
+    /// Which model a variant is a build of.
+    ///
+    /// Matched longest-first: `large-v3-v20240930` is the Turbo release and has to
+    /// be caught before the `large-v3` it contains, or every Turbo build would
+    /// file itself under the model it was derived from.
+    private static func familyID(for variant: String) -> String {
+        let stems = [
+            ("large-v3-v20240930", "large-v3-turbo"),
+            ("large-v3", "large-v3"),
+            ("large-v2", "large-v2"),
+            ("medium", "medium"),
+            ("small", "small"),
+            ("base", "base"),
+            ("tiny", "tiny"),
+        ]
+        let base = stems.first { variant.contains($0.0) }?.1 ?? "other"
+        return variant.contains("distil") ? "distil-" + base : base
+    }
+
+    /// Approximate full-precision weight size for a family, in bytes.
+    ///
+    /// WhisperKit spells the size out in the identifier only for quantised builds
+    /// — `..._626MB` — so the full-precision rows would otherwise be the only ones
+    /// in the list with no size at all, which is precisely backwards: they are the
+    /// large ones. These are parameter count times two bytes per float16 weight,
+    /// which lands within a few percent of the real download and is enough to
+    /// choose by. Zero for anything unrecognised, so an unknown build says nothing
+    /// rather than something wrong.
+    private static func fullPrecisionBytes(family: String) -> Int64 {
+        switch family {
+        case "tiny": 78_000_000            // 39M parameters
+        case "base": 148_000_000           // 74M
+        case "small": 483_000_000          // 244M
+        case "medium": 1_538_000_000       // 769M
+        case "large-v2", "large-v3": 3_100_000_000  // 1550M
+        case "large-v3-turbo": 1_618_000_000        // 809M
+        case "distil-large-v3": 1_512_000_000       // 756M
+        default: 0
+        }
+    }
+
     // MARK: Describing arbitrary variants
 
     /// A stand-in row for a variant the user already has that this list no longer
@@ -261,7 +420,9 @@ enum ModelCatalogue {
             technicalName: described.technicalName,
             summary: "Chosen before this list was simplified. It still works — switch only if you want to.",
             bytes: described.bytes,
-            loadSeconds: described.loadSeconds
+            loadSeconds: described.loadSeconds,
+            family: described.family,
+            qualifier: described.qualifier
         )
     }
 
@@ -269,15 +430,18 @@ enum ModelCatalogue {
     ///
     /// Advanced mode lists whatever the device catalogue returns, which changes
     /// with WhisperKit releases, so this parses the identifier rather than
-    /// matching a table that would silently go stale: family and size come out as
-    /// a readable name, and the parts that change how the model behaves —
-    /// English-only, distilled, quantised — come out as the summary, because those
-    /// are the traps someone browsing the full list can actually fall into.
+    /// matching a table that would silently go stale. The parts that change how
+    /// the model behaves come out on the axis each belongs to: the model itself
+    /// becomes the family, and the packaging — quantisation, Turbo build,
+    /// English-only — becomes the qualifier, which is what separates one row from
+    /// its siblings once they are grouped.
     static func describe(_ variant: String) -> SpeechModel {
         if let curated = model(for: variant) { return curated }
 
+        let family = familyID(for: variant)
         var core = variant
         var notes: [String] = []
+        var qualifiers: [String] = []
 
         let distilled = core.contains("distil")
         for prefix in ["openai_whisper-", "distil-whisper_distil-", "distil-whisper_"]
@@ -295,13 +459,16 @@ enum ModelCatalogue {
             if let mb = megabytes(in: tag) {
                 bytes = mb * 1_000_000
                 notes.append("Compressed to \(mb) MB.")
+                qualifiers.append("Compressed")
             } else if tag == "turbo" {
                 // Kept even when the name already reads "Turbo" — the catalogue
                 // lists `large-v3-v20240930` and `large-v3-v20240930_turbo` side by
                 // side, and without this the two rows would be indistinguishable.
                 notes.append("Turbo packaging — faster decoding.")
+                qualifiers.insert("Turbo build", at: 0)
             } else {
                 notes.append(String(tag))
+                qualifiers.append(String(tag))
             }
         }
 
@@ -313,9 +480,17 @@ enum ModelCatalogue {
             core.removeLast(3)
             englishOnly = true
             notes.append("English only — it will not transcribe other languages.")
+            qualifiers.insert("English only", at: 0)
         }
         if distilled {
             notes.append("Distilled — faster than the model it copies, a little less accurate.")
+        }
+
+        // No quantised tag means the full float16 download, whose size the
+        // identifier never states.
+        if bytes == 0 {
+            bytes = fullPrecisionBytes(family: family)
+            qualifiers.append("Full precision")
         }
 
         // `large-v3-v20240930` is the turbo release of large v3; the date is how
@@ -334,8 +509,19 @@ enum ModelCatalogue {
                 ? "Full-precision build, straight from the WhisperKit catalogue."
                 : notes.joined(separator: " "),
             bytes: bytes,
-            loadSeconds: estimatedLoadSeconds(bytes: bytes)
+            loadSeconds: estimatedLoadSeconds(bytes: bytes),
+            family: family,
+            qualifier: sentenceCased(qualifiers)
         )
+    }
+
+    /// Joins the qualifier parts with only the first capitalised — "Turbo build ·
+    /// compressed", not "Turbo build · Compressed". Each part is written
+    /// capitalised at the point it is added because any of them can come first.
+    private static func sentenceCased(_ parts: [String]) -> String {
+        parts.enumerated()
+            .map { $0.offset == 0 ? $0.element : $0.element.prefix(1).lowercased() + $0.element.dropFirst() }
+            .joined(separator: " · ")
     }
 
     private static func megabytes(in tag: Substring) -> Int64? {
@@ -349,13 +535,5 @@ enum ModelCatalogue {
     private static func estimatedLoadSeconds(bytes: Int64) -> Double {
         guard bytes > 0 else { return 0 }
         return 1.5 + Double(bytes) / 32_000_000
-    }
-
-    /// Sort order for Advanced mode: by family from lightest to heaviest, so the
-    /// list reads like the curated one rather than like a directory listing.
-    /// Unrecognised families sort last rather than interleaving unpredictably.
-    private static func familyRank(_ variant: String) -> Int {
-        let families = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-        return families.firstIndex(where: { variant.contains($0) }) ?? families.count
     }
 }
