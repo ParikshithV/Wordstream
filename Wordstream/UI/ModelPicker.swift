@@ -1,0 +1,278 @@
+//
+//  ModelPicker.swift
+//  Wordstream
+//
+
+import SwiftUI
+
+/// The speech-model chooser: one row per model, each with its own action.
+///
+/// This replaced a `Picker`, which was the wrong control for the job in two ways.
+/// It hid the fact that choosing a model triggers a several-hundred-megabyte
+/// download — selection in a menu reads as free — and it gave no way to back out
+/// of one, so picking `Exacting` on a slow connection meant waiting it out before
+/// anything else could be chosen. Rows make the download an explicit act with a
+/// visible size, and put a Stop next to the progress bar of the one running.
+///
+/// Two lists, one control: five curated models by default, and every variant this
+/// Mac supports behind Advanced mode. The default list is a recommendation; the
+/// advanced one is a catalogue, and conflating them would make the common case
+/// harder to serve the rare one.
+struct ModelPicker: View {
+    @Environment(\.theme) private var theme
+    var coordinator: DictationCoordinator
+    /// Off during onboarding. A first-run choice between five models is a decision
+    /// someone can make in seconds; the same screen offering twenty-odd builds is
+    /// a decision they postpone, and postponing this one leaves the app unable to
+    /// transcribe at all.
+    var allowsAdvanced: Bool = true
+    /// Called after a model finishes loading, so onboarding can advance itself.
+    var onReady: (() -> Void)?
+
+    @State private var prefs = Preferences.shared
+
+    private var engine: WhisperEngine { coordinator.engine }
+
+    private var offered: [SpeechModel] {
+        ModelCatalogue.offered(supportedBy: engine.availableModels)
+    }
+
+    /// What the list shows: the curated five, or everything the device supports.
+    ///
+    /// Either way the user's current model gets a row even when it is in neither
+    /// list, so the model actually doing the transcribing is never missing from
+    /// the list of models.
+    private var showsAll: Bool { allowsAdvanced && prefs.showAllSpeechModels }
+
+    private var rows: [SpeechModel] {
+        let base = showsAll
+            ? ModelCatalogue.allOffered(supportedBy: engine.availableModels)
+            : offered
+        let current = engine.loadedVariant ?? prefs.modelVariant
+        guard !current.isEmpty, !base.contains(where: { $0.variant == current }) else {
+            return base
+        }
+        return base + [ModelCatalogue.legacy(current)]
+    }
+
+    /// Always computed over the curated five: the recommendation is a judgement
+    /// about what suits this Mac, and widening the list doesn't change it.
+    private var recommended: SpeechModel? {
+        ModelCatalogue.recommended(for: engine.recommendedModel, among: offered)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.x2) {
+            if engine.availableModels.isEmpty {
+                HStack(spacing: Space.x3) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking which models run best on this Mac\u{2026}")
+                        .typeStyle(Typography.bodySm)
+                        .foregroundStyle(theme.fgTertiary)
+                }
+                .padding(.bottom, Space.x2)
+            }
+
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, model in
+                if index > 0 {
+                    Divider().overlay(theme.borderSubtle)
+                }
+                row(for: model)
+            }
+
+            if allowsAdvanced {
+                advancedToggle
+            }
+
+            if case let .failed(message) = engine.state {
+                HStack(alignment: .top, spacing: Space.x2) {
+                    Circle().fill(theme.fgDanger).frame(width: 5, height: 5).padding(.top, 6)
+                    Text(message)
+                        .typeStyle(Typography.caption)
+                        .foregroundStyle(theme.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, Space.x2)
+            }
+        }
+        .task { await engine.refreshCatalogue() }
+    }
+
+    // MARK: Advanced mode
+
+    /// A quiet text link under the list, not a switch above it.
+    ///
+    /// Weighting matters more here than discoverability: the five curated models
+    /// are the answer for almost everyone, and a labelled switch at the top of the
+    /// card reads as a decision to make before choosing — which is exactly the
+    /// research project the short list exists to avoid. Someone who wants the full
+    /// catalogue is looking for a way in and will find one word at the end of the
+    /// list; someone who isn't should barely register it.
+    private var advancedToggle: some View {
+        VStack(alignment: .leading, spacing: Space.x1) {
+            Button(showsAll ? "Show fewer" : "Show all models") {
+                prefs.showAllSpeechModels.toggle()
+            }
+            .buttonStyle(GatewayButtonStyle(variant: .ghost, size: .sm))
+            .padding(.horizontal, -Space.x3)  // Optically aligned with the rows.
+
+            if showsAll {
+                Text("Everything WhisperKit lists for this Mac, unfiltered — some builds are English-only, some are far slower for little gain.")
+                    .typeStyle(Typography.caption)
+                    .foregroundStyle(theme.fgTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.top, Space.x1)
+    }
+
+    // MARK: Row
+
+    @ViewBuilder
+    private func row(for model: SpeechModel) -> some View {
+        let isPreparing = engine.preparingVariant == model.variant
+        let isActive = engine.loadedVariant == model.variant && engine.state.isReady
+        let isRecommended = model.id == recommended?.id
+
+        VStack(alignment: .leading, spacing: Space.x3) {
+            HStack(alignment: .top, spacing: Space.x4) {
+                VStack(alignment: .leading, spacing: Space.x1) {
+                    HStack(spacing: Space.x2) {
+                        Text(model.name)
+                            .typeStyle(Typography.bodySmMedium)
+                            .foregroundStyle(theme.fgPrimary)
+
+                        // Only when it says something the name doesn't: in the
+                        // advanced list most rows *are* their technical name, and
+                        // printing it twice would be noise.
+                        if model.technicalName != model.name {
+                            Text(model.technicalName)
+                                .typeStyle(Typography.caption)
+                                .foregroundStyle(theme.fgTertiary)
+                        }
+
+                        if isActive {
+                            GatewayBadge(text: "In use", tone: .success)
+                        } else if isRecommended {
+                            GatewayBadge(text: "Best for this Mac", tone: .brand)
+                        }
+                    }
+
+                    Text(model.summary)
+                        .typeStyle(Typography.caption)
+                        .foregroundStyle(theme.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if isRecommended {
+                        Text(ModelCatalogue.recommendationReason(for: model, among: offered))
+                            .typeStyle(Typography.caption)
+                            .foregroundStyle(theme.fgBrand)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if !sizeLine(for: model).isEmpty {
+                        Text(sizeLine(for: model))
+                            .typeStyle(Typography.caption)
+                            .foregroundStyle(theme.fgTertiary)
+                    }
+
+                    // The build identifier, shown only where it is the thing being
+                    // chosen. In the curated list it is an implementation detail.
+                    if showsAll {
+                        Text(model.variant)
+                            .typeStyle(Typography.mono13)
+                            .foregroundStyle(theme.fgTertiary)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                Spacer(minLength: Space.x2)
+
+                action(for: model, isPreparing: isPreparing, isActive: isActive)
+                    .fixedSize()
+            }
+
+            if isPreparing {
+                progress
+            }
+        }
+        .padding(.vertical, Space.x3)
+        .contextMenu {
+            // Secondary, because reclaiming disk is a rare want and a destructive
+            // button sitting in every row would compete with the one that matters.
+            if engine.isDownloaded(model.variant), !isPreparing {
+                Button("Remove download", role: .destructive) {
+                    Task { await engine.delete(model.variant) }
+                }
+            }
+        }
+    }
+
+    private func sizeLine(for model: SpeechModel) -> String {
+        let onDisk = engine.isDownloaded(model.variant)
+        return switch (model.sizeText.isEmpty, onDisk) {
+        case (true, true): "On this Mac"
+        case (true, false): ""
+        case (false, true): "\(model.sizeText) · on this Mac"
+        case (false, false): model.sizeText
+        }
+    }
+
+    @ViewBuilder
+    private func action(for model: SpeechModel, isPreparing: Bool, isActive: Bool) -> some View {
+        if isPreparing {
+            Button("Stop") { engine.cancelPreparation() }
+                .buttonStyle(GatewayButtonStyle(variant: .secondary, size: .sm))
+        } else if isActive {
+            EmptyView()
+        } else {
+            Button(engine.isDownloaded(model.variant) ? "Use" : "Download") {
+                select(model)
+            }
+            .buttonStyle(
+                GatewayButtonStyle(
+                    variant: model.id == recommended?.id ? .primary : .secondary,
+                    size: .sm
+                )
+            )
+        }
+    }
+
+    private var progress: some View {
+        VStack(alignment: .leading, spacing: Space.x2) {
+            GatewayProgressBar(value: progressValue)
+            Text(progressLabel)
+                .typeStyle(Typography.caption)
+                .foregroundStyle(theme.fgTertiary)
+        }
+    }
+
+    private var progressValue: Double {
+        if case let .downloading(value) = engine.state { return value }
+        return 1
+    }
+
+    private var progressLabel: String {
+        switch engine.state {
+        case let .downloading(value) where value > 0:
+            "Downloading — \(Int(value * 100))%"
+        case .downloading:
+            "Starting download\u{2026}"
+        default:
+            "Loading into memory\u{2026}"
+        }
+    }
+
+    private func select(_ model: SpeechModel) {
+        // Recorded before the download finishes on purpose: this is the model the
+        // user asked for, and a quit mid-download should resume it next launch
+        // rather than silently reverting.
+        prefs.modelVariant = model.variant
+        Task {
+            await engine.prepare(variant: model.variant)
+            if engine.loadedVariant == model.variant, engine.state.isReady {
+                onReady?()
+            }
+        }
+    }
+}

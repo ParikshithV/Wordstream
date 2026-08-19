@@ -1,0 +1,115 @@
+---
+import MotifMark from './MotifMark.astro';
+import ThemeControls from './ThemeControls.astro';
+import { SITE } from '../lib/site';
+
+const LINKS = [
+  { href: '#how', label: 'How it works' },
+  { href: '#models', label: 'Models' },
+  { href: '#cleanup', label: 'Cleanup' },
+  { href: '#privacy', label: 'Privacy' },
+  { href: '#build', label: 'Build it' },
+];
+---
+
+<header class="nav">
+  <div class="page nav__inner">
+    <a class="nav__brand" href="/">
+      <MotifMark size={26} class="nav__mark" />
+      <span class="heading-sm">Wordstream</span>
+    </a>
+
+    <nav class="nav__links" aria-label="Sections">
+      {
+        LINKS.map((link) => (
+          <a class="body-sm nav__link" href={link.href}>
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    <div class="nav__actions">
+      <ThemeControls />
+      <a class="btn btn--secondary btn--sm nav__repo" href={SITE.repo} rel="noopener">
+        GitHub
+      </a>
+      <a class="btn btn--primary btn--sm" href="#get">Download</a>
+    </div>
+  </div>
+</header>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: color-mix(in srgb, var(--bg-canvas) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .nav__inner {
+    display: flex;
+    align-items: center;
+    gap: var(--x6);
+    min-height: 64px;
+  }
+
+  .nav__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--x2);
+    flex: none;
+  }
+
+  .nav__mark {
+    color: var(--fg-brand);
+  }
+
+  .nav__links {
+    display: flex;
+    align-items: center;
+    gap: var(--x5);
+    flex: 1;
+  }
+
+  .nav__link {
+    color: var(--fg-secondary);
+    padding-block: var(--x3);
+    transition: color var(--t-fast) var(--ease-standard);
+  }
+
+  .nav__link:hover {
+    color: var(--fg-primary);
+  }
+
+  .nav__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--x2);
+    margin-left: auto;
+  }
+
+  @media (max-width: 900px) {
+    .nav__links {
+      display: none;
+    }
+
+    .nav__inner {
+      gap: var(--x3);
+    }
+  }
+
+  @media (max-width: 560px) {
+    .nav__repo {
+      display: none;
+    }
+
+    /* The wordmark yields before the actions do — the mark alone still
+       identifies the page, and Download is what the page is for. */
+    .nav__brand span {
+      display: none;
+    }
+  }
+</style>

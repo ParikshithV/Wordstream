@@ -1,0 +1,18 @@
+---
+/* A mono uppercase eyebrow over a plain-language headline. */
+interface Props {
+  eyebrow: string;
+  title: string;
+  subtitle?: string;
+  size?: 'sm' | 'lg';
+  class?: string;
+}
+
+const { eyebrow, title, subtitle, size = 'lg', class: className = '' } = Astro.props;
+---
+
+<header class:list={['section-header', className]}>
+  <p class="label section-header__eyebrow">{eyebrow}</p>
+  <h2 class={size === 'lg' ? 'heading-lg' : 'heading-sm'}>{title}</h2>
+  {subtitle && <p class="body-md section-header__subtitle">{subtitle}</p>}
+</header>
