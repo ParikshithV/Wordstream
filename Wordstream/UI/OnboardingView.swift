@@ -17,6 +17,9 @@ struct OnboardingView: View {
 
     @State private var step: Step = .welcome
     @State private var prefs = Preferences.shared
+    @State private var isRelocating = false
+    @State private var relocationError: String?
+    @State private var showsReplaceConfirmation = false
 
     private var engine: WhisperEngine { coordinator.engine }
 
@@ -25,9 +28,17 @@ struct OnboardingView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            hero
-            content
+        // One scroll view over the whole page rather than one over the step
+        // below a pinned hero. The hero was holding 236pt of a 620pt window —
+        // more than a third of it — to say three things that don't change
+        // between steps, while the step that does change scrolled inside what
+        // was left. Letting the masthead leave with the rest gives every step
+        // the full window, and the steps that fit still show it.
+        ScrollView {
+            VStack(spacing: 0) {
+                hero
+                content
+            }
         }
         .frame(width: 640, height: 620)
         .background(theme.bgCanvas)
@@ -45,21 +56,27 @@ struct OnboardingView: View {
     /// gradient budget is the more restrained reading of §1's "restraint reads
     /// as competence", and it leaves the motif as the single piece of colour —
     /// which is what §5 reserves the motif for in the first place.
+    ///
+    /// Laid out as a lockup rather than a centred column, and left-aligned to
+    /// the same margin as the step below it. Stacked and centred it cost the
+    /// height of a whole card to introduce an app the user has already opened;
+    /// on one line it costs about a third of that and reads as the masthead it
+    /// is rather than as a splash screen the step has to get past.
     private var hero: some View {
-        VStack(spacing: Space.x3) {
-            MotifMarkView(size: 72)
-            Text("Wordstream")
-                .typeStyle(Typography.displayMd)
-                .foregroundStyle(theme.fgPrimary)
+        VStack(alignment: .leading, spacing: Space.x2) {
+            HStack(spacing: Space.x3) {
+                MotifMarkView(size: 40)
+                Text("Wordstream")
+                    .typeStyle(Typography.displayMd)
+                    .foregroundStyle(theme.fgPrimary)
+            }
             Text("Hold a key. Talk. Your words land where your cursor is.")
                 .typeStyle(Typography.bodySm)
                 .foregroundStyle(theme.fgTertiary)
-            Spacer(minLength: 0)
         }
-        .padding(.top, Space.x8)
+        .padding(.vertical, Space.x5)
         .padding(.horizontal, Space.x6)
-        .frame(maxWidth: .infinity)
-        .frame(height: 236)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.bgSurface)
         .overlay(alignment: .bottom) {
             Rectangle().fill(theme.borderSubtle).frame(height: 1)
@@ -70,18 +87,16 @@ struct OnboardingView: View {
 
     @ViewBuilder
     private var content: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.x5) {
-                switch step {
-                case .welcome: welcome
-                case .permissions: permissions
-                case .model: model
-                case .ready: ready
-                }
+        VStack(alignment: .leading, spacing: Space.x5) {
+            switch step {
+            case .welcome: welcome
+            case .permissions: permissions
+            case .model: model
+            case .ready: ready
             }
-            .padding(Space.x6)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(Space.x6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var welcome: some View {
@@ -99,6 +114,8 @@ struct OnboardingView: View {
                 .typeStyle(Typography.caption)
                 .foregroundStyle(theme.fgTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if !AppRelocator.isInstalled { relocationCard }
 
             Button("Get started") { step = .permissions }
                 .buttonStyle(GatewayButtonStyle(variant: .primary, size: .lg))
@@ -193,20 +210,27 @@ struct OnboardingView: View {
             // which under the old rule left the step with no way out of it.
             Button("Continue") { step = .ready }
                 .buttonStyle(GatewayButtonStyle(variant: .primary, size: .lg))
-                .disabled(!engine.state.isReady)
+                .disabled(!canLeaveModelStep)
 
-            if !engine.state.isReady {
-                Text("Ready to continue once a model has finished loading \u{2014} until then there is nothing to transcribe with.")
+            if !canLeaveModelStep {
+                Text("Ready to continue once the model has finished downloading \u{2014} until then there is nothing to transcribe with.")
                     .typeStyle(Typography.caption)
                     .foregroundStyle(theme.fgTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text("Saved to Application Support. Wordstream never asks for your Documents, Desktop or Downloads folders.")
-                .typeStyle(Typography.caption)
-                .foregroundStyle(theme.fgTertiary)
-                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// When this step will let go.
+    ///
+    /// The download is the part that needs the user's patience; the load that
+    /// follows it needs nothing from anyone and takes a handful of seconds it
+    /// can just as well spend behind the last screen. Holding the step until
+    /// `.ready` made people watch a bar that had already filled, so a model
+    /// whose files are all on disk is enough to move on — the last step says so
+    /// if the load is still running when it's reached.
+    private var canLeaveModelStep: Bool {
+        engine.state.isReady || engine.state.isLoading
     }
 
     /// What the model step says, given that its work is already done.
@@ -217,9 +241,13 @@ struct OnboardingView: View {
     /// between models only becomes worth describing once someone presses "Choose
     /// a different model", and it is described in the rows themselves there.
     private var modelSubtitle: String {
-        engine.state.isReady
-            ? "Already downloaded and ready \u{2014} nothing to choose. Bigger models hear you more accurately at the cost of load time and memory; you can swap below, or later in Settings."
-            : "The one that suits this Mac started downloading when Wordstream opened. Nothing to do but let it finish \u{2014} or pick a different one below, which you can also do later in Settings."
+        if engine.state.isReady {
+            return "Already downloaded and ready \u{2014} nothing to choose. Bigger models hear you more accurately at the cost of load time and memory; you can swap below, or later in Settings."
+        }
+        if engine.state.isLoading {
+            return "Downloaded already \u{2014} it is being loaded into memory now, which finishes on its own whether or not this window is open. Carry on, or pick a different model below."
+        }
+        return "The one that suits this Mac started downloading when Wordstream opened. Nothing to do but let it finish \u{2014} or pick a different one below, which you can also do later in Settings."
     }
 
     /// What the welcome screen says about the download already running.
@@ -237,6 +265,94 @@ struct OnboardingView: View {
         return "\(model.name) \u{2014} the speech model best suited to this Mac \u{2014} is already downloading in the background. \(model.sizeText), once."
     }
 
+    // MARK: Install location
+
+    /// Offered before the permissions step, not after it.
+    ///
+    /// The order is the whole point: TCC ties the three grants to the bundle's
+    /// path, so an app moved *after* onboarding keeps three switches that read
+    /// as on and a dictation key that does nothing. Doing the move first costs
+    /// one click here and saves an unexplainable failure later. The card
+    /// disappears entirely once the app lives in an Applications folder, which
+    /// is the state most people will already be in.
+    ///
+    /// The button is secondary rather than primary despite being the more
+    /// consequential action on this screen — "Get started" is the step's one
+    /// primary, and two saturated buttons in a column read as a choice between
+    /// equals rather than as an aside and a way forward.
+    private var relocationCard: some View {
+        GatewayCard {
+            VStack(alignment: .leading, spacing: Space.x3) {
+                Text("Move Wordstream to Applications first")
+                    .typeStyle(Typography.bodySmMedium)
+                    .foregroundStyle(theme.fgPrimary)
+
+                Text(relocationExplanation)
+                    .typeStyle(Typography.caption)
+                    .foregroundStyle(theme.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: Space.x3) {
+                    Button(isRelocating ? "Moving\u{2026}" : "Move to Applications") {
+                        if AppRelocator.destinationIsOccupied {
+                            showsReplaceConfirmation = true
+                        } else {
+                            relocate()
+                        }
+                    }
+                    .buttonStyle(GatewayButtonStyle(variant: .secondary, size: .md))
+                    .disabled(isRelocating)
+
+                    Button("Show in Finder") { AppRelocator.revealInFinder() }
+                        .buttonStyle(GatewayButtonStyle(variant: .ghost, size: .md))
+                        .disabled(isRelocating)
+                }
+
+                if let error = relocationError {
+                    Text("\(error) You can drag it across yourself instead \u{2014} use Show in Finder, then reopen Wordstream from Applications.")
+                        .typeStyle(Typography.caption)
+                        .foregroundStyle(theme.fgTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .alert("Replace the copy already in Applications?", isPresented: $showsReplaceConfirmation) {
+            Button("Replace") { relocate() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The existing Wordstream there goes to the Trash, so you can put it back if this was a mistake.")
+        }
+    }
+
+    /// What the card says, given what it can and can't tidy up afterwards.
+    ///
+    /// A translocated copy — one opened straight from a download or a disk image
+    /// — runs from a read-only mirror, and the real download is at a path this
+    /// process can't ask for. The move still works; the original just stays
+    /// where it is, and promising otherwise would leave someone hunting for a
+    /// duplicate that was never removed.
+    private var relocationExplanation: String {
+        let base = "This copy isn\u{2019}t in your Applications folder yet. Move it now, before granting permissions \u{2014} macOS ties those to where the app sits, so moving it later means granting all three again."
+        return AppRelocator.isTranslocated
+            ? base + " Wordstream will reopen from Applications; the copy you downloaded stays where it is, and you can delete it."
+            : base + " One click copies it across, reopens it there and puts this copy in the Trash."
+    }
+
+    private func relocate() {
+        relocationError = nil
+        isRelocating = true
+        Task {
+            do {
+                // On success this never returns to us — the replacement is
+                // already launching and this process terminates inside the call.
+                try await AppRelocator.moveToApplications()
+            } catch {
+                relocationError = error.localizedDescription
+            }
+            isRelocating = false
+        }
+    }
+
     private var ready: some View {
         VStack(alignment: .leading, spacing: Space.x5) {
             SectionHeader(
@@ -244,6 +360,20 @@ struct OnboardingView: View {
                 title: "Hold \(prefs.dictationShortcut.displayName.replacingOccurrences(of: "Hold ", with: "")) and speak",
                 subtitle: "Try it in any text field. Release the key and your words appear at the cursor. Press Escape while holding to cancel."
             )
+
+            // Reachable now with the model still loading, which is a few
+            // seconds of a dictation key that flashes "no model" rather than
+            // transcribing. Cheaper to say so than to let someone conclude the
+            // key doesn't work.
+            if engine.state.isLoading {
+                HStack(spacing: Space.x3) {
+                    ProgressView().controlSize(.small)
+                    Text("Your model is still loading into memory \u{2014} the key starts working the moment it lands.")
+                        .typeStyle(Typography.caption)
+                        .foregroundStyle(theme.fgTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             if let note = prefs.dictationShortcut.conflictNote {
                 GatewayCard {
