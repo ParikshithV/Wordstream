@@ -26,6 +26,11 @@ final class WhisperEngine {
         case failed(String)
 
         var isReady: Bool { self == .ready }
+
+        /// Files all on disk, model being brought up. Distinguished from
+        /// `.downloading` because the two waits are not the same promise: this
+        /// one needs nothing from the network and cannot fail for want of it.
+        var isLoading: Bool { self == .loading }
     }
 
     private let log = Logger(subsystem: "app.wordstream", category: "whisper")
@@ -56,6 +61,11 @@ final class WhisperEngine {
 
     private var kit: WhisperKit?
     private var prepareTask: Task<Void, Never>?
+
+    /// True only while `WhisperKit.download` is actually running, so a progress
+    /// callback that lands after it returns can't drag the label back from
+    /// "loading" to "downloading" for the tail of a load.
+    private var isFetchingFiles = false
 
     var audioProcessor: (any AudioProcessing)? { kit?.audioProcessor }
 
@@ -140,6 +150,7 @@ final class WhisperEngine {
         prepareTask?.cancel()
         prepareTask = nil
         preparingVariant = nil
+        isFetchingFiles = false
         state = loadedVariant == nil ? .idle : .ready
         log.info("Preparation cancelled")
     }
@@ -150,14 +161,18 @@ final class WhisperEngine {
         preparingVariant = variant
         defer {
             if preparingVariant == variant { preparingVariant = nil }
+            isFetchingFiles = false
         }
 
         // A variant already on disk goes straight to loading: the download call
         // below returns immediately for it, so announcing a download would be a
         // claim the user can see is false — the wait they're watching is the
-        // load, not a transfer.
+        // load, not a transfer. Read from the set rather than through
+        // `isDownloaded`, whose in-flight guard is about what the *picker*
+        // should claim and would answer this question with the state this line
+        // is trying to set.
         refreshDownloadedVariants()
-        state = isDownloaded(variant) ? .loading : .downloading(0)
+        state = downloadedVariants.contains(variant) ? .loading : .downloading(0)
         loadedVariant = nil
         kit = nil
 
@@ -167,19 +182,27 @@ final class WhisperEngine {
             // handle it means several hundred megabytes arrive behind a spinner
             // with no indication of how long is left. This returns immediately when
             // the model is already on disk.
+            isFetchingFiles = true
             let folder = try await WhisperKit.download(
                 variant: variant,
                 downloadBase: Self.modelStorage
             ) { [weak self] progress in
                 Task { @MainActor [weak self] in
                     guard let self, self.preparingVariant == variant else { return }
-                    // Guarded so a stray callback for an on-disk model can't push
-                    // the UI back from "loading" to "downloading".
-                    guard case .downloading = self.state else { return }
+                    guard self.isFetchingFiles else { return }
+                    // A callback short of the end is proof bytes are moving, and
+                    // that outranks the guess made before the call started: a
+                    // folder left behind by an interrupted download can look
+                    // finished enough to announce a load, and what the user then
+                    // watches is a transfer labelled as a load. The Hub also
+                    // fires one final callback for a repo it fetched nothing
+                    // for, which is why only the ones below 1 promote.
+                    guard progress.fractionCompleted < 1 else { return }
                     self.state = .downloading(progress.fractionCompleted)
                 }
             }
 
+            isFetchingFiles = false
             state = .loading
 
             let config = WhisperKitConfig(
@@ -231,8 +254,14 @@ final class WhisperEngine {
         repoFolder.appending(path: variant, directoryHint: .isDirectory)
     }
 
+    /// Whether a variant is on disk and usable *now*.
+    ///
+    /// False while its files are still arriving, even once enough of them have
+    /// landed for the folder to pass inspection — a row that says "on this Mac"
+    /// above its own download bar is describing something that isn't true yet.
     func isDownloaded(_ variant: String) -> Bool {
-        downloadedVariants.contains(variant)
+        if preparingVariant == variant, case .downloading = state { return false }
+        return downloadedVariants.contains(variant)
     }
 
     /// Scans the repo folder rather than testing the offered variants one by one,
@@ -243,15 +272,57 @@ final class WhisperEngine {
             at: Self.repoFolder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
         )) ?? []
 
-        downloadedVariants = Set(
-            folders.filter { folder in
-                // A folder alone isn't enough — an interrupted download leaves one
-                // behind, and calling that "Downloaded" would offer the user a
-                // model that fails to load.
-                let contents = try? FileManager.default.contentsOfDirectory(atPath: folder.path)
-                return contents?.isEmpty == false
-            }.map(\.lastPathComponent)
+        downloadedVariants = Set(folders.filter(Self.isComplete).map(\.lastPathComponent))
+    }
+
+    /// Whether a variant's folder holds a finished download or the debris of an
+    /// interrupted one.
+    ///
+    /// Two tests, because either on its own lies. The three CoreML models are
+    /// what `WhisperKit` loads, so a folder missing one of them is unusable
+    /// however much it weighs — but they are directories, created the moment
+    /// their first small file lands, and say nothing about the several hundred
+    /// megabytes of weights still in flight behind them. The Hub client writes a
+    /// `.metadata` sidecar for a file only once that file has fully arrived, so
+    /// a folder in which every file has one is a folder with nothing left to
+    /// fetch. This is what "Downloaded" has to mean: the alternative was a
+    /// half-finished folder reported as on-disk, which put "483 MB · on this
+    /// Mac" and "Loading into memory…" over a download that had barely started.
+    private static func isComplete(_ folder: URL) -> Bool {
+        let fm = FileManager.default
+
+        for name in ["MelSpectrogram", "AudioEncoder", "TextDecoder"] {
+            let compiled = folder.appending(path: "\(name).mlmodelc", directoryHint: .isDirectory)
+            let package = folder.appending(path: "\(name).mlpackage", directoryHint: .isDirectory)
+            guard fm.fileExists(atPath: compiled.path) || fm.fileExists(atPath: package.path) else {
+                return false
+            }
+        }
+
+        let sidecars = repoFolder
+            .appending(path: ".cache/huggingface/download", directoryHint: .isDirectory)
+            .appending(path: folder.lastPathComponent, directoryHint: .isDirectory)
+
+        // Nothing to check against: a folder placed here by hand, or by a client
+        // that never kept sidecars. The files themselves are then the only
+        // evidence there is, and they passed.
+        guard fm.fileExists(atPath: sidecars.path) else { return true }
+
+        let files = fm.enumerator(
+            at: folder,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
         )
+        while let url = files?.nextObject() as? URL {
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
+                continue
+            }
+            let relative = url.path.replacingOccurrences(of: folder.path + "/", with: "")
+            guard fm.fileExists(atPath: sidecars.appending(path: relative + ".metadata").path) else {
+                return false
+            }
+        }
+        return true
     }
 
     /// Removes a downloaded model, unloading it first if it is the live one.
