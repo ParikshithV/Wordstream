@@ -50,6 +50,15 @@ final class DictationCoordinator {
     private var overlay: OverlayController?
 
     private var target: TextInjector.Target?
+    /// What the current utterance is for. Set at key-down and read at release,
+    /// so a binding changed mid-dictation can't reroute an in-flight one.
+    private var trigger: HotkeyMonitor.Trigger = .dictation
+    /// The text Command Mode is editing, read at key-down for the same reason
+    /// `target` is.
+    private var commandSelection: String?
+    /// Resolves `commandSelection` when the Accessibility read came up empty and
+    /// the slower copy-based read had to be used instead.
+    private var commandSelectionTask: Task<String?, Never>?
     private var startedAt: Date?
     private var meterTimer: Timer?
     private var streamer: AudioStreamTranscriber?
@@ -60,16 +69,14 @@ final class DictationCoordinator {
     /// pipelines writing to the same state.
     private var isFinishing = false
 
-    var isHandsFreeActive: Bool { hotkeys.isHandsFreeActive }
-
     // MARK: Wiring
 
     func configure(modelContext: ModelContext, overlay: OverlayController) {
         self.modelContext = modelContext
         self.overlay = overlay
 
-        hotkeys.onPress = { [weak self] in self?.begin() }
-        hotkeys.onRelease = { [weak self] in self?.finish() }
+        hotkeys.onPress = { [weak self] trigger in self?.begin(trigger) }
+        hotkeys.onRelease = { [weak self] _ in self?.finish() }
         hotkeys.onCancel = { [weak self] in self?.cancel() }
         permissions.observeActivation()
 
@@ -112,7 +119,7 @@ final class DictationCoordinator {
 
     // MARK: Recording
 
-    private func begin() {
+    private func begin(_ trigger: HotkeyMonitor.Trigger) {
         guard !state.isBusy, !isFinishing else { return }
         guard engine.state.isReady else {
             log.warning("Hotkey pressed before a model was ready.")
@@ -122,7 +129,13 @@ final class DictationCoordinator {
 
         // Captured now: by insertion time the user may well be somewhere else,
         // and the text belongs where they were pointing when they started.
-        target = TextInjector.Target.capture()
+        let target = TextInjector.Target.capture()
+
+        commandSelection = nil
+        commandSelectionTask = nil
+
+        self.trigger = trigger
+        self.target = target
         startedAt = Date()
         previewText = ""
         levels = []
@@ -132,6 +145,8 @@ final class DictationCoordinator {
         overlay?.show()
         startMeter()
 
+        if trigger == .command { captureCommandSelection(in: target) }
+
         if prefs.livePreview {
             startLivePreview()
         } else if let processor = engine.audioProcessor {
@@ -140,6 +155,45 @@ final class DictationCoordinator {
             } catch {
                 fail("Couldn't start the microphone: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Resolves what Command Mode is going to edit.
+    ///
+    /// Read at the start of the utterance rather than at the end for the same
+    /// reason `target` is: by the time the instruction has been spoken and
+    /// transcribed, the selection may be a different one, or gone.
+    ///
+    /// Two routes, fast one first. The Accessibility read is synchronous and
+    /// costs nothing when it works, which it does for native controls. When it
+    /// comes back empty — Electron apps publish no accessibility tree at all
+    /// until an assistive client asks for one — the copy-based read takes over,
+    /// and that needs a round trip through the other app, so it cannot happen
+    /// inside the key-down handler. Recording has already begun by then, which
+    /// is fine: the user is still drawing breath.
+    private func captureCommandSelection(in target: TextInjector.Target) {
+        if let selection = injector.selectedText(in: target), !selection.isEmpty {
+            commandSelection = selection
+            return
+        }
+
+        commandSelectionTask = Task { [weak self] in
+            guard let self else { return nil }
+            let copied = await injector.selectedTextByCopying()
+            commandSelection = copied
+
+            // Abandon early rather than letting someone talk to a command that
+            // was never going to run. This lands about 50ms in, so it reads as
+            // the key press not taking rather than as a dictation being thrown
+            // away.
+            if copied == nil, state == .recording, trigger == .command {
+                let app = target.app?.localizedName ?? "that app"
+                log.info("Command mode: no selection in \(app, privacy: .public) by Accessibility or copy.")
+                stopCapture()
+                startedAt = nil
+                flash(.failed("Couldn't read a selection in \(app)."))
+            }
+            return copied
         }
     }
 
@@ -279,13 +333,53 @@ final class DictationCoordinator {
                 dictionary: dictionary.map { ($0.spoken, $0.written) }
             )
 
-            let result = await pipeline.enhance(
-                raw: output.text,
-                preferred: prefs.enhancementTier,
-                context: context,
-                removeFillers: prefs.removeFillers,
-                spokenPunctuation: prefs.spokenPunctuation
-            )
+            // In Command Mode what was just transcribed is the instruction, not
+            // the text — the text is what the user had selected when they pressed
+            // the key. A short utterance can outrun the copy-based read, so wait
+            // for it here rather than treating "not yet" as "nothing selected".
+            if trigger == .command, commandSelection == nil {
+                _ = await commandSelectionTask?.value
+            }
+
+            // A command with no selection must not fall through to the dictation
+            // branch. Releasing the key before the copy resolves outruns the early
+            // abort in `captureCommandSelection`, and the instruction would then be
+            // cleaned up and pasted as though the user had dictated it — so
+            // "make this shorter" would type *Make this shorter.* into their
+            // document, over the text they were pointing at.
+            if trigger == .command, commandSelection == nil {
+                let app = target?.app?.localizedName ?? "that app"
+                log.info("Command mode reached the pipeline with no selection in \(app, privacy: .public).")
+                flash(.failed("Couldn't read a selection in \(app)."))
+                return
+            }
+
+            let result: EnhancementPipeline.Result
+            if let selection = commandSelection {
+                result = await pipeline.command(
+                    instruction: output.text,
+                    selection: selection,
+                    preferred: prefs.enhancementTier,
+                    context: context
+                )
+            } else {
+                result = await pipeline.enhance(
+                    raw: output.text,
+                    preferred: prefs.enhancementTier,
+                    context: context,
+                    removeFillers: prefs.removeFillers,
+                    spokenPunctuation: prefs.spokenPunctuation
+                )
+            }
+
+            // Every Command Mode failure path returns the selection untouched,
+            // so an unchanged result means nothing was applied. Say so instead of
+            // replacing the selection with itself — that writes an entry onto the
+            // user's undo stack and looks, from the outside, exactly like success.
+            if let selection = commandSelection, result.text == selection {
+                flash(.failed("Couldn't apply that to the selection."))
+                return
+            }
 
             state = .inserting
             if let target {
@@ -293,7 +387,11 @@ final class DictationCoordinator {
             }
 
             persist(
-                raw: output.text,
+                // For a command the "before" is the passage that was selected,
+                // not the instruction that was spoken — that keeps History a
+                // before/after of the text, which is what it is for. The
+                // instruction itself is transient.
+                raw: commandSelection ?? output.text,
                 final: result.text,
                 tier: result.tier,
                 duration: duration,
@@ -321,6 +419,10 @@ final class DictationCoordinator {
 
     private func reset() {
         isFinishing = false
+        commandSelectionTask?.cancel()
+        commandSelectionTask = nil
+        commandSelection = nil
+        trigger = .dictation
         hotkeys.handsFreeDidStop()
         previewText = ""
         levels = []
@@ -386,11 +488,15 @@ final class DictationCoordinator {
         case .idle:
             .readyAndListening(eyebrow: "Ready", headline: "Hold to dictate")
         case .recording:
-            .readyAndListening(eyebrow: "Listening", headline: "Speak now")
+            trigger == .command
+                ? .readyAndListening(eyebrow: "Command", headline: "Say what to do with the selection")
+                : .readyAndListening(eyebrow: "Listening", headline: "Speak now")
         case .transcribing:
             .formingAResolution(eyebrow: "Transcribing", headline: "Working out what you said")
         case .enhancing:
-            .formingAResolution(eyebrow: "Polishing", headline: "Tidying it up")
+            trigger == .command
+                ? .formingAResolution(eyebrow: "Editing", headline: "Applying your instruction")
+                : .formingAResolution(eyebrow: "Polishing", headline: "Tidying it up")
         case .inserting:
             .formingAResolution(eyebrow: "Inserting", headline: "Placing your text")
         case let .failed(message):

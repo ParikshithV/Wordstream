@@ -15,11 +15,14 @@ import FoundationModels
 /// A guided schema removes the failure mode rather than trying to strip it
 /// afterwards.
 ///
+/// Named for what it is rather than for one of its two uses: the same field
+/// carries a cleaned dictation in one mode and an edited passage in the other.
+///
 /// File-scoped rather than nested and private because `@Generable` expands into a
 /// separate macro compilation unit, which cannot see a private nested type.
 @Generable
-struct CleanedText {
-    @Guide(description: "The cleaned dictation, and nothing else. No preamble, no quotes, no commentary.")
+struct ModelOutput {
+    @Guide(description: "The resulting text, and nothing else. No preamble, no quotes, no commentary.")
     var text: String
 }
 
@@ -63,10 +66,14 @@ final class FoundationModelEnhancer: TextEnhancer {
         )
 
         let response = try await session.respond(
-            to: text,
-            generating: CleanedText.self,
+            to: EnhancementPrompt.userTurn(for: text, context: context),
+            generating: ModelOutput.self,
             options: GenerationOptions(temperature: 0.1)
         )
-        return response.content.text
+        // The guided schema constrains the *shape* of the answer, not its
+        // content: the model can still spend the field on a fragment of the
+        // schema description it was given. Stripped here for the same reason the
+        // MLX tier strips its preambles.
+        return EnhancementPrompt.stripDecoration(response.content.text)
     }
 }

@@ -73,7 +73,7 @@ final class PermissionsManager {
 
     // MARK: Requests
 
-    enum Kind: CaseIterable {
+    enum Kind {
         case microphone, accessibility, inputMonitoring
     }
 
@@ -171,7 +171,7 @@ final class PermissionsManager {
     /// They are genuinely different permissions surfaces and can disagree, so
     /// when the microphone misbehaves the first useful question is which one is
     /// saying what.
-    func logMicrophoneDiagnostics(_ label: String) {
+    private func logMicrophoneDiagnostics(_ label: String) {
         let capture = AVCaptureDevice.authorizationStatus(for: .audio).rawValue
         let audioApp = AVAudioApplication.shared.recordPermission.rawValue
         let hasDevice = AVCaptureDevice.default(for: .audio) != nil
@@ -181,19 +181,6 @@ final class PermissionsManager {
         AVCaptureDevice=\(capture) AVAudioApplication=\(audioApp) \
         defaultDevice=\(hasDevice) usageString=\(usage)
         """)
-    }
-
-    /// Whether asking again can still produce a system prompt.
-    ///
-    /// macOS prompts only once per permission. After that the request call is a
-    /// no-op and the settings pane is the only way through — but by then the app
-    /// is at least listed there, because it asked.
-    func canPrompt(_ kind: Kind) -> Bool {
-        switch kind {
-        case .microphone: microphone == .notDetermined
-        case .accessibility: accessibility != .granted
-        case .inputMonitoring: inputMonitoring != .granted
-        }
     }
 
     func status(_ kind: Kind) -> Status {

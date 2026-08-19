@@ -129,10 +129,6 @@ final class Preferences {
 
     private let defaults = UserDefaults.standard
 
-    private func get<T>(_ key: String, _ fallback: T) -> T {
-        defaults.object(forKey: key) as? T ?? fallback
-    }
-
     private func set<T>(_ key: String, _ value: T) {
         defaults.set(value, forKey: key)
     }
@@ -244,10 +240,6 @@ final class Preferences {
         didSet { set("hasCompletedOnboarding", hasCompletedOnboarding) }
     }
 
-    var launchAtLogin: Bool {
-        didSet { set("launchAtLogin", launchAtLogin) }
-    }
-
     private init() {
         let d = UserDefaults.standard
         dictationShortcut = Preferences.load(d, "shortcut.dictation") ?? .rightOption
@@ -264,11 +256,10 @@ final class Preferences {
         removeFillers = d.object(forKey: "removeFillers") as? Bool ?? true
         spokenPunctuation = d.object(forKey: "spokenPunctuation") as? Bool ?? true
         cloudProvider = d.string(forKey: "cloudProvider") ?? "anthropic"
-        mlxModelID = d.string(forKey: "mlxModelID") ?? "mlx-community/gemma-3-1b-it-qat-4bit"
+        mlxModelID = d.string(forKey: "mlxModelID") ?? MLXEnhancer.defaultModelID
         palette = Palette(rawValue: d.string(forKey: "palette") ?? "") ?? .dawn
         appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .system
         hasCompletedOnboarding = d.bool(forKey: "hasCompletedOnboarding")
-        launchAtLogin = d.bool(forKey: "launchAtLogin")
     }
 
     private func store<T: Codable>(_ value: T?, _ key: String) {

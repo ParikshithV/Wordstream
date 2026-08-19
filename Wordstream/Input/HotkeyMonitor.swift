@@ -37,20 +37,27 @@ final class HotkeyMonitor {
     private var dictationShortcut: Shortcut = .rightOption
     private var commandShortcut: Shortcut?
 
-    private var isDictationKeyDown = false
+    /// Which binding is physically held, so a release routes to the same place
+    /// the press came from. Replaces a bare `isDictationKeyDown`, which could
+    /// only describe one of the two bindings.
+    private var heldTrigger: Trigger?
     private var lastPressAt: Date?
     private var handsFreeEnabled = true
 
     /// Set while a hands-free session is running, so the same key stops it.
     private(set) var isHandsFreeActive = false
 
-    var onPress: (() -> Void)?
-    var onRelease: (() -> Void)?
+    /// Which binding fired. Command Mode is a hold like dictation is, so it
+    /// needs the same press/release pair rather than the single fire-and-forget
+    /// callback it had before — the key going down is what captures the
+    /// selection, and the key coming up is what ends the instruction.
+    enum Trigger: Equatable {
+        case dictation, command
+    }
+
+    var onPress: ((Trigger) -> Void)?
+    var onRelease: ((Trigger) -> Void)?
     var onCancel: (() -> Void)?
-    var onCommandMode: (() -> Void)?
-    /// Fired when the tap is disabled and cannot be recovered — the UI needs to
-    /// tell the user rather than appear to work.
-    var onTapInvalidated: (() -> Void)?
 
     var isRunning: Bool { tap != nil }
 
@@ -62,7 +69,7 @@ final class HotkeyMonitor {
         handsFreeEnabled = handsFreeOnDoubleTap
         // A modifier that is currently held under the old binding must not leak
         // into the new one.
-        isDictationKeyDown = false
+        heldTrigger = nil
     }
 
     @discardableResult
@@ -110,7 +117,7 @@ final class HotkeyMonitor {
         }
         tap = nil
         runLoopSource = nil
-        isDictationKeyDown = false
+        heldTrigger = nil
     }
 
     /// Re-installs the tap. Used after the user grants Accessibility, since the tap
@@ -134,8 +141,6 @@ final class HotkeyMonitor {
             if let tap {
                 log.warning("Event tap disabled (\(String(describing: type))); re-enabling.")
                 CGEvent.tapEnable(tap: tap, enable: true)
-            } else {
-                onTapInvalidated?()
             }
             return false
 
@@ -152,46 +157,76 @@ final class HotkeyMonitor {
     }
 
     private func handleFlagsChanged(_ event: CGEvent) {
-        guard case let .modifierHold(key) = dictationShortcut else { return }
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        guard keyCode == key.keyCode else { return }
+        guard let (trigger, key) = holdBinding(matching: keyCode) else { return }
 
         let isDown = (event.flags.rawValue & key.deviceMask) != 0
 
-        if isDown, !isDictationKeyDown {
-            isDictationKeyDown = true
-            handlePress()
-        } else if !isDown, isDictationKeyDown {
-            isDictationKeyDown = false
-            handleRelease()
+        // One at a time. Holding the second binding while the first is already
+        // down is ignored rather than started, so a stray overlap cannot leave a
+        // recording that nothing will ever release.
+        if isDown, heldTrigger == nil {
+            heldTrigger = trigger
+            handlePress(trigger)
+        } else if !isDown, heldTrigger == trigger {
+            heldTrigger = nil
+            handleRelease(trigger)
         }
     }
 
-    private func handlePress() {
+    /// Resolves a key code to whichever binding claims it.
+    ///
+    /// Dictation wins a tie. If both are bound to the same key the primary action
+    /// is the one that should fire, and Command Mode would be unreachable on that
+    /// key anyway — better that the main feature keeps working than that both
+    /// become unpredictable.
+    private func holdBinding(matching keyCode: Int64) -> (Trigger, ModifierKey)? {
+        if case let .modifierHold(key) = dictationShortcut, key.keyCode == keyCode {
+            return (.dictation, key)
+        }
+        if case let .modifierHold(key) = commandShortcut, key.keyCode == keyCode {
+            return (.command, key)
+        }
+        return nil
+    }
+
+    private func handlePress(_ trigger: Trigger) {
+        // Hands-free is a dictation affordance only. Command Mode reads the
+        // selection at key-down, so a toggle that starts minutes before you
+        // speak would capture whatever happened to be selected then.
+        guard trigger == .dictation else {
+            onPress?(trigger)
+            return
+        }
+
         let now = Date()
 
         if handsFreeEnabled, let last = lastPressAt, now.timeIntervalSince(last) < 0.4 {
             lastPressAt = nil
             if isHandsFreeActive {
                 isHandsFreeActive = false
-                onRelease?()
+                onRelease?(.dictation)
             } else {
                 isHandsFreeActive = true
-                onPress?()
+                onPress?(.dictation)
             }
             return
         }
 
         lastPressAt = now
         if isHandsFreeActive { return }
-        onPress?()
+        onPress?(.dictation)
     }
 
-    private func handleRelease() {
+    private func handleRelease(_ trigger: Trigger) {
+        guard trigger == .dictation else {
+            onRelease?(trigger)
+            return
+        }
         // In hands-free the key is only a toggle, so a physical release means
         // nothing until the next double-tap.
         guard !isHandsFreeActive else { return }
-        onRelease?()
+        onRelease?(.dictation)
     }
 
     /// Returns true when the event should be consumed.
@@ -212,16 +247,24 @@ final class HotkeyMonitor {
             // A chord is a discrete trigger, so it toggles rather than holds.
             if isHandsFreeActive {
                 isHandsFreeActive = false
-                onRelease?()
+                onRelease?(.dictation)
             } else {
                 isHandsFreeActive = true
-                onPress?()
+                onPress?(.dictation)
             }
             return true
         }
 
         if case let .chord(code, modifiers) = commandShortcut, keyCode == code, flags == modifiers {
-            onCommandMode?()
+            // Same reasoning: nothing to hold, so the first press opens the
+            // instruction and the second closes it.
+            if heldTrigger == .command {
+                heldTrigger = nil
+                onRelease?(.command)
+            } else {
+                heldTrigger = .command
+                onPress?(.command)
+            }
             return true
         }
 

@@ -98,7 +98,7 @@ private struct GeneralSettings: View {
                     Toggle("", isOn: $prefs.livePreview).labelsHidden()
                 }
 
-                Divider().overlay(theme.borderSubtle)
+                SettingDivider()
 
                 SettingRow(
                     title: "Hands-free on double-tap",
@@ -109,7 +109,7 @@ private struct GeneralSettings: View {
                         .onChange(of: prefs.handsFreeOnDoubleTap) { _, _ in coordinator.applyShortcuts() }
                 }
 
-                Divider().overlay(theme.borderSubtle)
+                SettingDivider()
 
                 SettingRow(
                     title: "Sound when text is inserted",
@@ -118,7 +118,7 @@ private struct GeneralSettings: View {
                     Toggle("", isOn: $prefs.playSounds).labelsHidden()
                 }
 
-                Divider().overlay(theme.borderSubtle)
+                SettingDivider()
 
                 SettingRow(
                     title: "Launch at login",
@@ -332,7 +332,7 @@ private struct ModelsSettings: View {
 
                 ModelPicker(coordinator: coordinator)
 
-                Divider().overlay(theme.borderSubtle)
+                SettingDivider()
 
                 SettingRow(
                     title: "Spoken language",
@@ -399,7 +399,7 @@ private struct ModelsSettings: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(EnhancementTier.allCases.enumerated()), id: \.element) { index, tier in
                     if index > 0 {
-                        Divider().overlay(theme.borderSubtle)
+                        SettingDivider()
                     }
                     tierRow(tier)
                 }
@@ -614,7 +614,7 @@ private struct ModelsSettings: View {
                     options: EnhancementStyle.allCases.map { ($0, $0.displayName, $0.summary) }
                 )
 
-                Divider().overlay(theme.borderSubtle)
+                SettingDivider()
 
                 SettingRow(
                     title: "Remove filler words",
@@ -742,7 +742,7 @@ private struct ShortcutSettings: View {
                     )
                 }
 
-                Divider().overlay(theme.borderSubtle)
+                SettingDivider()
 
                 SettingRow(
                     title: "Command mode",
@@ -810,7 +810,7 @@ private struct PermissionsSettings: View {
                     detail: "To hear you.",
                     permissions: coordinator.permissions
                 )
-                Divider().overlay(theme.borderSubtle)
+                SettingDivider()
                 PermissionRow(
                     kind: .accessibility,
                     title: "Accessibility",
@@ -818,7 +818,7 @@ private struct PermissionsSettings: View {
                     permissions: coordinator.permissions,
                     onChange: { coordinator.restartMonitoring() }
                 )
-                Divider().overlay(theme.borderSubtle)
+                SettingDivider()
                 PermissionRow(
                     kind: .inputMonitoring,
                     title: "Input Monitoring",

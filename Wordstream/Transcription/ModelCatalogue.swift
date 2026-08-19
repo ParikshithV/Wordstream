@@ -230,7 +230,7 @@ enum ModelCatalogue {
     /// is not, and a flat share of an 8 GB Mac leaves nothing after that reserve
     /// while a flat share of a 64 GB one would wave through models that are slow
     /// for reasons memory has nothing to do with.
-    static func speechMemoryBudget(physicalMemory: UInt64) -> Int64 {
+    private static func speechMemoryBudget(physicalMemory: UInt64) -> Int64 {
         let gb = Double(physicalMemory) / 1_073_741_824
         return switch gb {
         case ..<12: 500_000_000    // 8 GB: the clean-up model is already the bigger tenant.
