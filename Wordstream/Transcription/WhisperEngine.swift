@@ -418,7 +418,7 @@ final class WhisperEngine {
 
         let results = try await kit.transcribe(audioArray: samples, decodeOptions: options)
         let text = results.map(\.text).joined(separator: " ")
-        return TranscriptionOutput(text: text.trimmingCharacters(in: .whitespacesAndNewlines))
+        return TranscriptionOutput(text: TranscriptFilter.stripAnnotations(text))
     }
 
     /// Turns dictionary bias terms into decoder conditioning.
@@ -504,12 +504,47 @@ extension AudioStreamTranscriber.State {
     var previewText: String {
         var parts = confirmedSegments.map(\.text)
         parts += unconfirmedSegments.map(\.text)
-        let joined = parts.joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let joined = TranscriptFilter.stripAnnotations(parts.joined(separator: " "))
 
-        let live = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let live = TranscriptFilter.stripAnnotations(currentText)
         // The library uses this string as a placeholder; it is not transcript text.
         guard live != "Waiting for speech..." , !live.isEmpty else { return joined }
         return joined.isEmpty ? live : joined + " " + live
+    }
+}
+
+/// Strips Whisper's bracketed non-speech annotations.
+///
+/// The model narrates what it hears when it is not hearing words — `[BLANK_AUDIO]`,
+/// `[MUSIC]`, `[Silence]`, and their mangled cousins such as `[BLANK UNISOM]` — and
+/// on a silent or noisy dictation that annotation is the entire result. It is not
+/// something the user said, so it has no business reaching the caret. `suppressBlank`
+/// does not cover this: these arrive as ordinary decoded text, not special tokens.
+///
+/// An unclosed bracket is stripped to the end of the string, because the live preview
+/// sees these annotations mid-decode, before the closing bracket has been emitted.
+/// Nothing dictated by voice produces a stray `[`, so there is nothing to protect.
+enum TranscriptFilter {
+
+    private static let bracketed = try? NSRegularExpression(pattern: "\\[[^\\[\\]]*(\\]|$)")
+
+    /// Returns the text with every bracketed annotation removed, and the gap it
+    /// left closed up. Text that was *only* an annotation comes back empty, which
+    /// the caller already treats as "nothing was said".
+    static func stripAnnotations(_ text: String) -> String {
+        guard text.contains("["), let bracketed else {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let stripped = bracketed.stringByReplacingMatches(
+            in: text,
+            range: NSRange(text.startIndex..., in: text),
+            withTemplate: ""
+        )
+
+        return stripped
+            .replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: " +([,.;:!?…])", with: "$1", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
