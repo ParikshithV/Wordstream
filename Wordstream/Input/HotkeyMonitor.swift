@@ -27,9 +27,18 @@ import os
 ///
 /// The tap is attached to the main run loop, so the C callback lands on the main
 /// thread and `MainActor.assumeIsolated` is genuinely safe rather than a wish.
+@Observable
 @MainActor
 final class HotkeyMonitor {
-    private let log = Logger(subsystem: "app.wordstream", category: "hotkey")
+    /// Set while Settings is recording a new shortcut.
+    ///
+    /// The recorder listens with a local monitor, but this tap sees the same
+    /// keys first — so pressing the current dictation key to rebind it started
+    /// a dictation behind the recorder. Static because the recorder is a view
+    /// with no route to the coordinator, and there is only ever one tap.
+    static var isSuspended = false
+
+    @ObservationIgnored private let log = Logger(subsystem: "app.wordstream", category: "hotkey")
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -127,13 +136,51 @@ final class HotkeyMonitor {
         start()
     }
 
-    func handsFreeDidStop() {
+    /// Called when the coordinator returns to idle, however it got there.
+    ///
+    /// Clears the toggle states as well as hands-free: a chord-bound Command
+    /// Mode holds `heldTrigger` between its two presses, so a dictation that
+    /// ended any other way — Escape, an error — left the next press read as
+    /// the closing one, and Command Mode needed pressing twice to start.
+    func sessionDidEnd() {
         isHandsFreeActive = false
+        if case .chord = commandShortcut, heldTrigger == .command {
+            heldTrigger = nil
+        }
+    }
+
+    /// Forgets every key believed to be down.
+    ///
+    /// A release that never arrives — the lid closed with the key held, the
+    /// session locked mid-press, the tap disabled for a moment — otherwise
+    /// leaves `heldTrigger` set, and every later press is ignored as an overlap
+    /// with a hold that will never end. The hotkey looks dead until relaunch.
+    func resetHeldState() {
+        heldTrigger = nil
+        lastPressAt = nil
+        isHandsFreeActive = false
+    }
+
+    /// Re-installs the tap if the system has invalidated or disabled it, which
+    /// it can do across sleep without ever delivering a `tapDisabled` event.
+    func ensureHealthy() {
+        guard let tap else { return }
+        if !CFMachPortIsValid(tap) {
+            log.warning("Event tap was invalidated; reinstalling.")
+            restart()
+        } else if !CGEvent.tapIsEnabled(tap: tap) {
+            log.warning("Event tap was disabled; re-enabling.")
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
     }
 
     // MARK: Event handling
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Bool {
+        if Self.isSuspended, type != .tapDisabledByTimeout, type != .tapDisabledByUserInput {
+            return false
+        }
+
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             // Not optional. Without this the hotkey stops working permanently the
@@ -142,6 +189,9 @@ final class HotkeyMonitor {
                 log.warning("Event tap disabled (\(String(describing: type))); re-enabling.")
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
+            // Key-ups may have been dropped while the tap was off; a stale
+            // held key would swallow every later press.
+            heldTrigger = nil
             return false
 
         case .flagsChanged:
@@ -242,8 +292,13 @@ final class HotkeyMonitor {
 
         let relevant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
         let flags = event.flags.intersection(relevant).rawValue
+        // Holding a chord a moment too long auto-repeats its keyDown, and each
+        // repeat toggled the session — start, stop, start — on one press. The
+        // repeats are still swallowed so they don't type into the app.
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
 
         if case let .chord(code, modifiers) = dictationShortcut, keyCode == code, flags == modifiers {
+            guard !isRepeat else { return true }
             // A chord is a discrete trigger, so it toggles rather than holds.
             if isHandsFreeActive {
                 isHandsFreeActive = false
@@ -256,6 +311,7 @@ final class HotkeyMonitor {
         }
 
         if case let .chord(code, modifiers) = commandShortcut, keyCode == code, flags == modifiers {
+            guard !isRepeat else { return true }
             // Same reasoning: nothing to hold, so the first press opens the
             // instruction and the second closes it.
             if heldTrigger == .command {

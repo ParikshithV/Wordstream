@@ -37,7 +37,12 @@ final class DictationCoordinator {
     /// Amplitude buffer driving the §7 waveform.
     private(set) var levels: [Float] = []
     private(set) var elapsed: TimeInterval = 0
-    private(set) var lastTranscript: Transcript?
+    /// The text of the most recent dictation, for the menu bar.
+    ///
+    /// A copy rather than the `Transcript` itself: deleting that row from
+    /// History left the menu bar holding a model object that no longer
+    /// existed, and reading it the next time the menu opened could crash.
+    private(set) var lastDictationText: String?
 
     let engine = WhisperEngine()
     let permissions = PermissionsManager()
@@ -68,6 +73,7 @@ final class DictationCoordinator {
     /// being transcribed — without it, a fast double-dictation interleaves two
     /// pipelines writing to the same state.
     private var isFinishing = false
+    private var flashGeneration = 0
 
     // MARK: Wiring
 
@@ -79,8 +85,82 @@ final class DictationCoordinator {
         hotkeys.onRelease = { [weak self] _ in self?.finish() }
         hotkeys.onCancel = { [weak self] in self?.cancel() }
         permissions.observeActivation()
+        observeSleepAndWake()
+        startMonitorWatchdog()
 
         applyShortcuts()
+    }
+
+    private var monitorWatchdog: Timer?
+
+    /// Keeps the event tap installed and enabled without anyone having to ask.
+    ///
+    /// The tap can only be created once Accessibility is granted, and that
+    /// grant happens in System Settings, which tells this app nothing. Outside
+    /// onboarding's Continue button the only route to a working key was the
+    /// Reconnect button in Settings — someone who granted the permission later
+    /// had a key that silently did nothing. Polling is the only signal there
+    /// is, and `AXIsProcessTrusted` is cheap enough to ask every few seconds.
+    /// The same tick re-enables a tap the system has switched off.
+    private func startMonitorWatchdog() {
+        monitorWatchdog?.invalidate()
+        monitorWatchdog = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.hotkeys.isRunning {
+                    self.hotkeys.ensureHealthy()
+                } else if AXIsProcessTrusted() {
+                    self.permissions.refresh()
+                    self.hotkeys.start()
+                }
+            }
+        }
+    }
+
+    /// Sleep is where an always-on hotkey app quietly breaks.
+    ///
+    /// A key held as the lid closes never delivers its release, so the monitor
+    /// believes it is still down and ignores every later press; a recording in
+    /// progress is left in `.recording` with an audio engine the system has
+    /// already torn down, and `begin` refuses everything while busy; and the
+    /// event tap itself can come back invalidated or disabled without any
+    /// `tapDisabled` event to say so. Each of those reads, to the user, as the
+    /// app simply not working after the Mac wakes.
+    private func observeSleepAndWake() {
+        let center = NSWorkspace.shared.notificationCenter
+
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleSleep() }
+            }
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleWake() }
+            }
+        }
+    }
+
+    private func handleSleep() {
+        log.info("System going to sleep; abandoning any recording.")
+        if state == .recording {
+            stopCapture()
+            startedAt = nil
+            reset()
+        }
+        hotkeys.resetHeldState()
+    }
+
+    private func handleWake() {
+        log.info("System woke; checking the event tap.")
+        hotkeys.resetHeldState()
+        if case .failed = state { reset() }
+
+        permissions.refresh()
+        guard permissions.accessibility.isGranted else { return }
+        // Reinstalled rather than trusted: a tap from before sleep can survive
+        // as a valid, enabled port that no longer receives anything.
+        hotkeys.restart()
     }
 
     func applyShortcuts() {
@@ -108,7 +188,7 @@ final class DictationCoordinator {
     /// its context is a live handle to an object that no longer exists, and the
     /// menu bar reads this property every time it opens.
     func forgetLastTranscript() {
-        lastTranscript = nil
+        lastDictationText = nil
     }
 
     /// Loads the model the user already chose.
@@ -116,11 +196,17 @@ final class DictationCoordinator {
     /// Deliberately does nothing when none has been chosen — on first run that
     /// is `prefetchRecommendedModel()`'s job, and it is called from
     /// onboarding rather than from here.
+    ///
+    /// No catalogue fetch first. That is a network round trip to Hugging Face
+    /// whose only consumer is the model picker, which fetches it for itself
+    /// when it appears; in front of the load it held every launch hostage to
+    /// the network, and offline, to its timeout.
     func prepareModel() async {
-        await engine.refreshCatalogue()
         let variant = prefs.modelVariant
-        guard !variant.isEmpty else { return }
-        await engine.prepare(variant: variant)
+        if !variant.isEmpty { await engine.prepare(variant: variant) }
+        // After the speech model, not alongside it: both are big loads, and
+        // being able to dictate at all matters more than the cleanup pass.
+        await pipeline.warmUp(preferred: prefs.enhancementTier)
     }
 
     /// Starts onboarding's model download before the user has chosen anything.
@@ -140,10 +226,16 @@ final class DictationCoordinator {
     /// Onboarding's welcome copy says the download has started; starting a
     /// transfer this size silently would be the wrong trade.
     func prefetchRecommendedModel() async {
-        await engine.refreshCatalogue()
-
         let chosen = prefs.modelVariant
-        guard let variant = chosen.isEmpty ? engine.recommendedCuratedVariant : chosen else { return }
+        guard chosen.isEmpty else {
+            // Already decided, so there is nothing for the catalogue to tell
+            // us; don't make the load wait on a network round trip for it.
+            await engine.prepare(variant: chosen)
+            return
+        }
+
+        await engine.refreshCatalogue()
+        guard let variant = engine.recommendedCuratedVariant else { return }
 
         // Never override a download the user started themselves in the meantime —
         // the catalogue fetch above is a network round trip, and they may well
@@ -186,13 +278,29 @@ final class DictationCoordinator {
 
         if prefs.livePreview {
             startLivePreview()
-        } else if let processor = engine.audioProcessor {
-            do {
-                try processor.startRecordingLive(inputDeviceID: nil, callback: nil)
-            } catch {
-                fail("Couldn't start the microphone: \(error.localizedDescription)")
-            }
+        } else {
+            startPlainRecording()
         }
+    }
+
+    private func startPlainRecording() {
+        guard let processor = engine.audioProcessor else {
+            abortRecording("No speech model is loaded yet.")
+            return
+        }
+        do {
+            try processor.startRecordingLive(inputDeviceID: nil, callback: nil)
+        } catch {
+            abortRecording("Couldn't start the microphone: \(error.localizedDescription)")
+        }
+    }
+
+    /// Stops a recording that never got going and says why. Without stopping
+    /// capture first, the meter timer kept running behind the failure.
+    private func abortRecording(_ message: String) {
+        stopCapture()
+        startedAt = nil
+        fail(message)
     }
 
     /// Resolves what Command Mode is going to edit.
@@ -245,7 +353,7 @@ final class DictationCoordinator {
         ) else {
             // Preview couldn't be built; fall back to plain recording rather
             // than failing the dictation.
-            try? engine.audioProcessor?.startRecordingLive(inputDeviceID: nil, callback: nil)
+            startPlainRecording()
             return
         }
 
@@ -257,6 +365,12 @@ final class DictationCoordinator {
                 // Expected on release.
             } catch {
                 self.log.warning("Live preview stopped: \(error.localizedDescription, privacy: .public)")
+                // The preview owns the microphone in this mode, so its failing
+                // to start means nothing is being recorded. Saying so beats
+                // letting the user talk and then discarding it as silence.
+                if self.state == .recording, self.streamer === streamer {
+                    self.abortRecording("Couldn't start the microphone: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -460,7 +574,7 @@ final class DictationCoordinator {
         commandSelectionTask = nil
         commandSelection = nil
         trigger = .dictation
-        hotkeys.handsFreeDidStop()
+        hotkeys.sessionDidEnd()
         previewText = ""
         levels = []
         elapsed = 0
@@ -477,9 +591,13 @@ final class DictationCoordinator {
         isFinishing = false
         state = newState
         overlay?.show()
+        // Only the latest message clears itself; an earlier timer must not cut
+        // a newer one short.
+        flashGeneration += 1
+        let generation = flashGeneration
         Task {
             try? await Task.sleep(for: .seconds(2.5))
-            if case .failed = self.state { self.reset() }
+            if case .failed = self.state, generation == self.flashGeneration { self.reset() }
         }
     }
 
@@ -511,7 +629,7 @@ final class DictationCoordinator {
             enhancementTier: tier.rawValue
         )
         modelContext.insert(transcript)
-        lastTranscript = transcript
+        lastDictationText = transcript.finalText
         try? modelContext.save()
     }
 

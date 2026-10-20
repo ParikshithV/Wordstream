@@ -160,8 +160,26 @@ final class MLXEnhancer: TextEnhancer {
 
     /// Whether the weights are already on disk, so Settings can distinguish
     /// "not set up" from "downloading" without starting a download to find out.
+    ///
+    /// The repo folder alone is not enough: the Hub client creates it the moment
+    /// a download starts, so an interrupted or still-running download reported
+    /// itself as downloaded, the pipeline picked this tier, and the dictation
+    /// spent its whole time budget fetching the rest of the weights. A finished
+    /// download has a snapshot holding the config and the weights, and no
+    /// `.incomplete` blobs left behind.
     var isModelDownloaded: Bool {
-        FileManager.default.fileExists(atPath: Self.cacheFolder(for: modelID).path)
+        let fm = FileManager.default
+        let folder = Self.cacheFolder(for: modelID)
+
+        let blobs = (try? fm.contentsOfDirectory(atPath: folder.appending(path: "blobs").path)) ?? []
+        guard !blobs.contains(where: { $0.hasSuffix(".incomplete") }) else { return false }
+
+        let snapshots = folder.appending(path: "snapshots", directoryHint: .isDirectory)
+        let revisions = (try? fm.contentsOfDirectory(atPath: snapshots.path)) ?? []
+        return revisions.contains { revision in
+            let files = (try? fm.contentsOfDirectory(atPath: snapshots.appending(path: revision).path)) ?? []
+            return files.contains("config.json") && files.contains { $0.hasSuffix(".safetensors") }
+        }
     }
 
     /// Removes the weights for every model this app offers.

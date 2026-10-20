@@ -80,7 +80,14 @@ private struct GeneralSettings: View {
     @Environment(\.theme) private var theme
     var coordinator: DictationCoordinator
     @State private var prefs = Preferences.shared
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var launchAtLogin = GeneralSettings.isLaunchAtLoginOn
+    @State private var launchAtLoginNote: String?
+
+    /// Pending approval counts as on: the item is registered and macOS is only
+    /// waiting for the user to allow it in Login Items.
+    private static var isLaunchAtLoginOn: Bool {
+        [.enabled, .requiresApproval].contains(SMAppService.mainApp.status)
+    }
 
     var body: some View {
         SectionHeader(
@@ -127,10 +134,12 @@ private struct GeneralSettings: View {
                     Toggle("", isOn: $launchAtLogin)
                         .labelsHidden()
                         .onChange(of: launchAtLogin) { _, enabled in
-                            try? enabled
-                                ? SMAppService.mainApp.register()
-                                : SMAppService.mainApp.unregister()
+                            setLaunchAtLogin(enabled)
                         }
+                }
+
+                if let launchAtLoginNote {
+                    InlineNote(text: launchAtLoginNote, tone: .warning)
                 }
             }
         }
@@ -156,6 +165,30 @@ private struct GeneralSettings: View {
         }
 
         ResetSettings(coordinator: coordinator)
+    }
+
+    /// The toggle used to swallow the error and stay on, so a registration
+    /// macOS had refused looked like it had worked. It now always ends up
+    /// showing what launchd actually holds.
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        launchAtLoginNote = nil
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            launchAtLoginNote = "Couldn\u{2019}t change this: \(error.localizedDescription)"
+        }
+
+        if SMAppService.mainApp.status == .requiresApproval {
+            launchAtLoginNote = "macOS needs you to allow Wordstream in System Settings \u{2192} General \u{2192} Login Items."
+            SMAppService.openSystemSettingsLoginItems()
+        }
+
+        let actual = Self.isLaunchAtLoginOn
+        if launchAtLogin != actual { launchAtLogin = actual }
     }
 }
 
@@ -360,6 +393,7 @@ private struct ModelsSettings: View {
     /// Non-nil only while a download is running, so one value carries both the
     /// state and the progress.
     @State private var mlxProgress: Double?
+    @State private var mlxError: String?
 
     private let pipeline = EnhancementPipeline()
 
@@ -626,6 +660,9 @@ private struct ModelsSettings: View {
             } else {
                 Button("Download") { downloadMLXModel() }
                     .buttonStyle(GatewayButtonStyle(variant: .secondary, size: .sm))
+                if let mlxError {
+                    InlineNote(text: mlxError, tone: .danger)
+                }
             }
         }
         .onChange(of: prefs.mlxModelID) { _, _ in
@@ -725,10 +762,21 @@ private struct ModelsSettings: View {
 
     private func downloadMLXModel() {
         mlxProgress = 0
+        mlxError = nil
         Task {
             let enhancer = MLXEnhancer(modelID: prefs.mlxModelID)
-            try? await enhancer.download { value in
-                Task { @MainActor in mlxProgress = value }
+            do {
+                try await enhancer.download { value in
+                    Task { @MainActor in
+                        // A late progress callback must not resurrect the bar
+                        // after the download has already finished.
+                        if mlxProgress != nil { mlxProgress = value }
+                    }
+                }
+            } catch {
+                // Used to be `try?`: a failed download just put the Download
+                // button back with no word on why.
+                mlxError = "The download didn\u{2019}t finish: \(error.localizedDescription)"
             }
             mlxProgress = nil
             await refresh()

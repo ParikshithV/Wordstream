@@ -59,6 +59,17 @@ final class WhisperEngine {
     /// worth measuring rather than guessing from the model's name.
     private(set) var realTimeFactor: Double?
 
+    /// Why the last switch to another model failed, kept while the previous
+    /// model carries on serving dictation — `state` is `.ready` again by then,
+    /// so it can no longer say this itself.
+    private(set) var lastSwitchFailure: String?
+
+    /// What the UI should report as the engine's error, if anything.
+    var failureMessage: String? {
+        if case let .failed(message) = state { return message }
+        return lastSwitchFailure
+    }
+
     private var kit: WhisperKit?
     private var prepareTask: Task<Void, Never>?
 
@@ -164,43 +175,31 @@ final class WhisperEngine {
             isFetchingFiles = false
         }
 
-        // A variant already on disk goes straight to loading: the download call
-        // below returns immediately for it, so announcing a download would be a
-        // claim the user can see is false — the wait they're watching is the
-        // load, not a transfer. Read from the set rather than through
+        // A variant already on disk goes straight to loading: nothing is
+        // downloaded for it, so announcing a download would be a claim the user
+        // can see is false — the wait they're watching is the load, not a
+        // transfer. Read from the set rather than through
         // `isDownloaded`, whose in-flight guard is about what the *picker*
         // should claim and would answer this question with the state this line
         // is trying to set.
         refreshDownloadedVariants()
         state = downloadedVariants.contains(variant) ? .loading : .downloading(0)
-        loadedVariant = nil
-        kit = nil
+        lastSwitchFailure = nil
+
+        // The model already loaded stays loaded through the download, so that
+        // stopping or failing a switch leaves the user with the model they had
+        // rather than with none. It is only released below, once the new files
+        // are on disk and it is about to be replaced in memory.
 
         do {
-            // Downloading explicitly rather than letting `WhisperKit.init` do it,
-            // because only the standalone downloader reports progress. Letting init
-            // handle it means several hundred megabytes arrive behind a spinner
-            // with no indication of how long is left. This returns immediately when
-            // the model is already on disk.
-            isFetchingFiles = true
-            let folder = try await WhisperKit.download(
-                variant: variant,
-                downloadBase: Self.modelStorage
-            ) { [weak self] progress in
-                Task { @MainActor [weak self] in
-                    guard let self, self.preparingVariant == variant else { return }
-                    guard self.isFetchingFiles else { return }
-                    // A callback short of the end is proof bytes are moving, and
-                    // that outranks the guess made before the call started: a
-                    // folder left behind by an interrupted download can look
-                    // finished enough to announce a load, and what the user then
-                    // watches is a transfer labelled as a load. The Hub also
-                    // fires one final callback for a repo it fetched nothing
-                    // for, which is why only the ones below 1 promote.
-                    guard progress.fractionCompleted < 1 else { return }
-                    self.state = .downloading(progress.fractionCompleted)
-                }
-            }
+            // A variant already on disk is loaded from its folder directly. The
+            // downloader is not the free no-op it looks like for these: the Hub
+            // client still makes a network round trip to compare every file
+            // against the remote repo, which put a network wait in front of
+            // every launch — and offline, failed the load of a model that was
+            // sitting right there.
+            let onDisk = downloadedVariants.contains(variant)
+            let folder = onDisk ? Self.folder(for: variant) : try await fetch(variant)
 
             isFetchingFiles = false
             state = .loading
@@ -211,7 +210,12 @@ final class WhisperEngine {
                 modelFolder: folder.path,
                 verbose: false,
                 logLevel: .error,
-                prewarm: true,
+                // Prewarming loads every model, unloads it, then loads it again
+                // so CoreML can specialise it for this chip at lower peak memory.
+                // That specialisation is cached by the system, so it is worth
+                // paying once after a download and pure overhead on every launch
+                // after that.
+                prewarm: !onDisk,
                 load: true,
                 download: false
             )
@@ -219,7 +223,28 @@ final class WhisperEngine {
             refreshDownloadedVariants()
             try Task.checkCancellation()
 
-            let kit = try await WhisperKit(config)
+            // Past the point of no return: two models resident at once would
+            // fight over memory, so the old one goes before the new one loads.
+            await self.kit?.unloadModels()
+            self.kit = nil
+            loadedVariant = nil
+            realTimeFactor = nil
+
+            let kit: WhisperKit
+            do {
+                kit = try await WhisperKit(config)
+            } catch where onDisk && !(error is CancellationError) {
+                // Files that passed inspection but won't load — most likely an
+                // interrupted download with no sidecars to give it away. Let the
+                // downloader repair them, then try once more.
+                log.warning("Loading \(variant, privacy: .public) from disk failed; re-fetching.")
+                let repaired = try await fetch(variant)
+                isFetchingFiles = false
+                state = .loading
+                config.modelFolder = repaired.path
+                config.prewarm = true
+                kit = try await WhisperKit(config)
+            }
             try Task.checkCancellation()
 
             self.kit = kit
@@ -235,7 +260,41 @@ final class WhisperEngine {
             guard !Task.isCancelled else { return }
             let message = error.localizedDescription
             log.error("Failed to prepare \(variant, privacy: .public): \(message, privacy: .public)")
-            state = .failed(message)
+            if kit != nil {
+                // The previous model is still loaded and working; keep it.
+                lastSwitchFailure = message
+                state = .ready
+            } else {
+                state = .failed(message)
+            }
+        }
+    }
+
+    /// Downloads a variant's files, reporting progress.
+    ///
+    /// Explicit rather than left to `WhisperKit.init`, because only the
+    /// standalone downloader reports progress. Letting init handle it means
+    /// several hundred megabytes arrive behind a spinner with no indication of
+    /// how long is left.
+    private func fetch(_ variant: String) async throws -> URL {
+        isFetchingFiles = true
+        return try await WhisperKit.download(
+            variant: variant,
+            downloadBase: Self.modelStorage
+        ) { [weak self] progress in
+            Task { @MainActor [weak self] in
+                guard let self, self.preparingVariant == variant else { return }
+                guard self.isFetchingFiles else { return }
+                // A callback short of the end is proof bytes are moving, and
+                // that outranks the guess made before the call started: a
+                // folder left behind by an interrupted download can look
+                // finished enough to announce a load, and what the user then
+                // watches is a transfer labelled as a load. The Hub also
+                // fires one final callback for a repo it fetched nothing
+                // for, which is why only the ones below 1 promote.
+                guard progress.fractionCompleted < 1 else { return }
+                self.state = .downloading(progress.fractionCompleted)
+            }
         }
     }
 
@@ -430,7 +489,12 @@ final class WhisperEngine {
     private func promptTokens(for terms: [String]) -> [Int]? {
         guard !terms.isEmpty, let tokenizer = kit?.tokenizer else { return nil }
         let prompt = terms.joined(separator: ", ")
+        // `encode` wraps the text in the tokenizer's own special tokens
+        // (start-of-transcript, end-of-text). Passed through as a prompt those
+        // read to the decoder as a finished transcript, and with any dictionary
+        // bias terms saved it could return nothing at all.
         let tokens = tokenizer.encode(text: " \(prompt)")
+            .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
         // Whisper's prompt window is limited; an over-long dictionary crowds out
         // the audio context and makes transcription worse, not better.
         return Array(tokens.prefix(180))

@@ -153,13 +153,6 @@ enum AppRelocator {
             return values
         }())
 
-        // Tidy the copy that was just superseded — unless we're running from a
-        // translocated mirror, in which case the real original is at a path this
-        // process isn't allowed to know.
-        if !isTranslocated {
-            try? await NSWorkspace.shared.recycle([source])
-        }
-
         // Relaunch from the new home. `createsNewApplicationInstance` is
         // required: without it macOS sees a running process with this bundle
         // identifier and simply activates the copy we are about to kill.
@@ -169,6 +162,15 @@ enum AppRelocator {
             _ = try await NSWorkspace.shared.openApplication(at: destination, configuration: configuration)
         } catch {
             throw RelocationError.launchFailed(error.localizedDescription)
+        }
+
+        // Tidy the copy that was just superseded, only now that the new one is
+        // confirmed running — trashed before the launch, a failed launch left
+        // the user carrying on in an app that lived in the Trash. Skipped when
+        // running from a translocated mirror, whose real original is at a path
+        // this process isn't allowed to know.
+        if !isTranslocated {
+            try? await NSWorkspace.shared.recycle([source])
         }
 
         log.info("Relaunched from \(destination.path, privacy: .public); quitting this copy")
