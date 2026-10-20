@@ -70,6 +70,7 @@ struct ShortcutRecorderView: View {
     private func start() {
         isRecording = true
         pendingModifier = nil
+        HotkeyMonitor.isSuspended = true
 
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             switch event.type {
@@ -113,6 +114,7 @@ struct ShortcutRecorderView: View {
     private func stop() {
         isRecording = false
         pendingModifier = nil
+        HotkeyMonitor.isSuspended = false
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil

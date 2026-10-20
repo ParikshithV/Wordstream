@@ -107,7 +107,10 @@ struct RuleCleaner {
         for entry in entries {
             let spoken = entry.spoken.trimmingCharacters(in: .whitespaces)
             guard !spoken.isEmpty else { continue }
-            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: spoken) + "\\b"
+            // Lookarounds rather than `\b`: a boundary only exists next to a
+            // word character, so a term that starts or ends in a symbol —
+            // "C#", ".NET" — could never match with `\b` on that side.
+            let pattern = "(?<![\\w])" + NSRegularExpression.escapedPattern(for: spoken) + "(?![\\w])"
             guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
                 continue
             }
@@ -141,13 +144,18 @@ struct RuleCleaner {
         result = result.replacingOccurrences(
             of: " +([,.;:!?…])", with: "$1", options: .regularExpression
         )
-        // Exactly one space after it, when a word follows.
+        // Exactly one space after it, when a word follows. Not for `.` or `:`,
+        // and never before a digit: Whisper writes "1,000", "3.14", "10:30" and
+        // "example.com" itself, and spacing those out broke them. Spoken
+        // punctuation keeps the space that followed the word it replaced, so
+        // this only has to repair the rarer joins filler removal leaves.
         result = result.replacingOccurrences(
-            of: "([,.;:!?…])([A-Za-z0-9])", with: "$1 $2", options: .regularExpression
+            of: "([,;!?…])([A-Za-z])", with: "$1 $2", options: .regularExpression
         )
         // Collapse duplicates left behind by filler removal ("um, so" → ", so").
+        // Full stops are left alone so a transcribed "..." survives.
         result = result.replacingOccurrences(
-            of: "([,.;:!?])\\s*\\1+", with: "$1", options: .regularExpression
+            of: "([,;:!?])\\s*\\1+", with: "$1", options: .regularExpression
         )
         result = result.replacingOccurrences(
             of: " *\\n *", with: "\n", options: .regularExpression
@@ -172,8 +180,16 @@ struct RuleCleaner {
             if capitaliseNext, character.isLetter {
                 characters[index] = Character(character.uppercased())
                 capitaliseNext = false
-            } else if character == "." || character == "!" || character == "?" || character == "\n" {
+            } else if character == "\n" {
                 capitaliseNext = true
+            } else if character == "." || character == "!" || character == "?" {
+                // Only when the sentence actually ends here. A full stop inside
+                // a token — "example.com", "v2.final" — is followed directly by
+                // more of it, and capitalising there produced "example.Com".
+                let next = characters.index(after: index)
+                capitaliseNext = next == characters.endIndex
+                    || characters[next].isWhitespace
+                    || characters[next] == "\"" || characters[next] == "'"
             } else if !character.isWhitespace, character != "\"", character != "'" {
                 capitaliseNext = false
             }

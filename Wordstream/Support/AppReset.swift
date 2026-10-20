@@ -86,6 +86,9 @@ enum AppReset {
         // 1. Live state first. Unloading the speech model here also covers the
         //    case where its files are about to be deleted underneath it.
         coordinator.forgetLastTranscript()
+        // A download still running would carry on writing into the folders
+        // about to be deleted, and load a model into the engine just emptied.
+        coordinator.engine.cancelPreparation()
         await coordinator.engine.unload()
 
         // 2. Stored dictations and dictionary terms.

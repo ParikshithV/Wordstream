@@ -143,7 +143,7 @@ struct ModelPicker: View {
                 advancedToggle
             }
 
-            if case let .failed(message) = engine.state {
+            if let message = engine.failureMessage {
                 HStack(alignment: .top, spacing: Space.x2) {
                     Circle().fill(theme.fgDanger).frame(width: 5, height: 5).padding(.top, 6)
                     Text(message)
@@ -403,7 +403,12 @@ struct ModelPicker: View {
     @ViewBuilder
     private func action(for model: SpeechModel, isPreparing: Bool, isActive: Bool) -> some View {
         if isPreparing {
-            Button("Stop") { engine.cancelPreparation() }
+            Button("Stop") {
+                engine.cancelPreparation()
+                // Stopping a switch keeps the model already loaded, so that is
+                // the one to come back to next launch, not the abandoned one.
+                if let loaded = engine.loadedVariant { prefs.modelVariant = loaded }
+            }
                 .buttonStyle(GatewayButtonStyle(variant: .secondary, size: .sm))
         } else if isActive {
             EmptyView()

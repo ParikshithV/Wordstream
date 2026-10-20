@@ -37,7 +37,7 @@ struct DictionaryView: View {
 
                     Button("Add", action: add)
                         .buttonStyle(GatewayButtonStyle(variant: .primary, size: .md))
-                        .disabled(spoken.isEmpty || written.isEmpty)
+                        .disabled(trimmedSpoken.isEmpty || trimmedWritten.isEmpty)
                 }
 
                 Text("Example: \u{201C}kubernetes\u{201D} \u{2192} \u{201C}Kubernetes\u{201D}, or \u{201C}see sharp\u{201D} \u{2192} \u{201C}C#\u{201D}.")
@@ -109,11 +109,14 @@ struct DictionaryView: View {
         )
     }
 
+    /// Validated trimmed, as stored: an all-spaces field used to enable Add and
+    /// save a blank term, which then went to Whisper as an empty bias prompt.
+    private var trimmedSpoken: String { spoken.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedWritten: String { written.trimmingCharacters(in: .whitespacesAndNewlines) }
+
     private func add() {
-        let entry = DictionaryEntry(
-            spoken: spoken.trimmingCharacters(in: .whitespaces),
-            written: written.trimmingCharacters(in: .whitespaces)
-        )
+        guard !trimmedSpoken.isEmpty, !trimmedWritten.isEmpty else { return }
+        let entry = DictionaryEntry(spoken: trimmedSpoken, written: trimmedWritten)
         modelContext.insert(entry)
         spoken = ""
         written = ""

@@ -18,8 +18,8 @@ struct MenuBarContentView: View {
         VStack(alignment: .leading, spacing: Space.x3) {
             header
 
-            if let transcript = coordinator.lastTranscript {
-                lastDictation(transcript)
+            if let text = coordinator.lastDictationText {
+                lastDictation(text)
             }
 
             GatewayToggleRow(title: "Live preview while speaking", isOn: $prefs.livePreview)
@@ -51,12 +51,12 @@ struct MenuBarContentView: View {
 
     /// The transcript sits in its own card so it reads as content rather than as
     /// another row of controls.
-    private func lastDictation(_ transcript: Transcript) -> some View {
+    private func lastDictation(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: Space.x2) {
             Text("Last dictation")
                 .typeStyle(Typography.label)
                 .foregroundStyle(theme.fgTertiary)
-            Text(transcript.finalText)
+            Text(text)
                 .typeStyle(Typography.bodySm)
                 .foregroundStyle(theme.fgSecondary)
                 .lineLimit(3)
@@ -64,7 +64,7 @@ struct MenuBarContentView: View {
 
             Button {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(transcript.finalText, forType: .string)
+                NSPasteboard.general.setString(text, forType: .string)
                 withAnimation(Motion.standard(Motion.fast)) { didCopy = true }
             } label: {
                 Label(
@@ -83,7 +83,7 @@ struct MenuBarContentView: View {
             RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
                 .strokeBorder(theme.borderSubtle, lineWidth: 1)
         )
-        .onChange(of: transcript.finalText) { didCopy = false }
+        .onChange(of: text) { didCopy = false }
     }
 
     /// One list, one visual language: every option is an icon-led row of the same

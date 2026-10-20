@@ -404,16 +404,8 @@ final class EnhancementPipeline {
         }
 
         do {
-            let enhanced = try await withThrowingTaskGroup(of: String.self) { group -> String in
-                group.addTask { try await enhancer.enhance(ruleCleaned, context: context) }
-                let ceiling = timeout(for: tier)
-                group.addTask {
-                    try await Task.sleep(for: ceiling)
-                    throw EnhancementError.timedOut
-                }
-                guard let first = try await group.next() else { throw EnhancementError.timedOut }
-                group.cancelAll()
-                return first
+            let enhanced = try await Self.race(timeout(for: tier)) {
+                try await enhancer.enhance(ruleCleaned, context: context)
             }
 
             // Checked before plausibility and logged separately, because the two
@@ -468,20 +460,13 @@ final class EnhancementPipeline {
             return Result(text: selection, tier: .rulesOnly)
         }
 
-        var context = context
-        context.task = .command(selection: selection)
+        var commandContext = context
+        commandContext.task = .command(selection: selection)
+        let context = commandContext
 
         do {
-            let edited = try await withThrowingTaskGroup(of: String.self) { group -> String in
-                group.addTask { try await enhancer.enhance(instruction, context: context) }
-                let ceiling = timeout(for: tier)
-                group.addTask {
-                    try await Task.sleep(for: ceiling)
-                    throw EnhancementError.timedOut
-                }
-                guard let first = try await group.next() else { throw EnhancementError.timedOut }
-                group.cancelAll()
-                return first
+            let edited = try await Self.race(timeout(for: tier)) {
+                try await enhancer.enhance(instruction, context: context)
             }
 
             let trimmed = edited.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -497,6 +482,55 @@ final class EnhancementPipeline {
         } catch {
             log.warning("Command mode failed on \(tier.rawValue, privacy: .public) (\(error.localizedDescription, privacy: .public)); leaving the selection alone.")
             return Result(text: selection, tier: .rulesOnly)
+        }
+    }
+
+    /// Runs `work` against a deadline that actually holds.
+    ///
+    /// This was a task group, which cannot do the job: a group does not return
+    /// until every child has finished, so when the model call ignores
+    /// cancellation — MLX loading weights, an on-device generation already
+    /// under way — the timeout child threw on time and the user still waited
+    /// for the whole call. Resuming a continuation from whichever side finishes
+    /// first returns at the deadline regardless, and the loser is cancelled and
+    /// left to wind down on its own.
+    private static func race(
+        _ ceiling: Duration,
+        _ work: @escaping @Sendable () async throws -> String
+    ) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let once = ResumeOnce(continuation)
+            let timer = Task {
+                try? await Task.sleep(for: ceiling)
+                guard !Task.isCancelled else { return }
+                once.resume(with: .failure(EnhancementError.timedOut))
+            }
+            let worker = Task {
+                let result = await Swift.Result(awaiting: work)
+                timer.cancel()
+                once.resume(with: result)
+            }
+            Task {
+                // Whichever lost, stop it.
+                _ = await timer.result
+                worker.cancel()
+            }
+        }
+    }
+
+    /// Loads the local model ahead of the first dictation, when it is the tier
+    /// that dictation would use.
+    ///
+    /// Bringing the weights up takes longer than the four-second ceiling on
+    /// its own, so without this the first dictation after every launch timed
+    /// out and fell back to rule-cleaned text.
+    func warmUp(preferred: EnhancementTier) async {
+        guard preferred != .rulesOnly, let (_, tier) = await resolve(preferred), tier == .mlx else { return }
+        do {
+            try await mlx.download { _ in }
+            log.info("Local cleanup model warmed up.")
+        } catch {
+            log.warning("Couldn't warm up the local model: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -533,6 +567,29 @@ final class EnhancementPipeline {
             out.append((tier, available, available ? nil : await enhancer.unavailableReason))
         }
         return out
+    }
+}
+
+/// Resumes a continuation exactly once, from whichever caller gets there first.
+private nonisolated final class ResumeOnce: Sendable {
+    private let continuation: OSAllocatedUnfairLock<CheckedContinuation<String, Error>?>
+
+    init(_ continuation: CheckedContinuation<String, Error>) {
+        self.continuation = OSAllocatedUnfairLock(uncheckedState: continuation)
+    }
+
+    func resume(with result: Result<String, Error>) {
+        let pending = continuation.withLockUnchecked { stored in
+            defer { stored = nil }
+            return stored
+        }
+        pending?.resume(with: result)
+    }
+}
+
+private extension Result where Failure == Error {
+    init(awaiting body: () async throws -> Success) async {
+        do { self = .success(try await body()) } catch { self = .failure(error) }
     }
 }
 
